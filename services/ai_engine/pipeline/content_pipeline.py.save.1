@@ -1,0 +1,22 @@
+from services.ai_engine.services.writer_service import AIWriterService
+from services.ai_engine.services.translator_service import AITranslatorService
+from services.ai_engine.services.post_service import PostService
+
+
+class ContentPipeline:
+    def __init__(self):
+        self.writer = AIWriterService()
+        self.translator = AITranslatorService()
+        self.storage = AssetService()self.storage = PostService()
+
+    def generate_full_content(self, topic: str):
+        ru = self.writer.generate_ru(topic)
+        en = self.translator.ru_to_en(ru)
+
+        asset = self.storage.save(topic, ru, en)
+
+        return {
+            "id": asset.id,
+            "ru": ru,
+            "en": en
+        }

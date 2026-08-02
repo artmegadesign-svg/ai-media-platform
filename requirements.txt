@@ -1,0 +1,7 @@
+openai
+sqlalchemy
+psycopg2-binary
+asyncpg
+alembic
+uvicorn
+fastapi

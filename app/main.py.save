@@ -1,0 +1,16 @@
+from fastapi import FastAPI
+from db.seed_languages import seed_languages
+import asyncio
+
+app = FastAPI(
+    title="AI Media Platform",
+    version="0.1.0",
+)
+
+@app.on_event("startup")
+async def startup():
+    await seed_languages()
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}

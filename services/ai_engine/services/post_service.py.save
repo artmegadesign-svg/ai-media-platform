@@ -1,0 +1,51 @@
+from db.session import SessionLocal
+from models.post import Post
+from models.content_variant import ContentVariant
+
+
+class PostService:
+    def save(self, topic: str, ru: str, en: str):
+        db = SessionLocal()
+
+        try:
+            post = Post(
+                title=topic[:255],
+                topic=topic,
+                status="published",
+                ru_content=ru,
+                en_content=en
+            )
+
+            db.add(post)
+            db.commit()
+            db.refresh(post)
+
+            variants = [
+                ContentVariant(
+                    post_id=post.id,
+                    language_code="ru",
+                    content=ru
+                ),
+                ContentVariant(
+                    post_id=post.id,
+                    language_code="en",
+                    content=en
+                )
+            ]
+
+            db.add_all(variants)
+            db.commit()
+
+            result = Post(
+    id=post.id,
+    title=post.title,
+    topic=post.topic,
+    status=post.status,
+    ru_content=post.ru_content,
+    en_content=post.en_content,
+)
+
+            return post
+
+        finally:
+            db.close()

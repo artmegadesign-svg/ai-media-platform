@@ -1,0 +1,26 @@
+[project]
+name = "ai-media-platform"
+version = "0.1.0"
+description = "AI Media Platform"
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi>=0.116.1",
+    "uvicorn[standard]>=0.35.0",
+    # DB core
+    "sqlalchemy>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    # config
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.28.1",
+    "psycopg2-binary>=2.9.12",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "ruff>=0.12.9",
+    "mypy>=1.17.1",
+]
