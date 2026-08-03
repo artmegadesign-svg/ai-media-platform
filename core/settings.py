@@ -5,7 +5,7 @@ class Settings(BaseSettings):
 
     app_name: str = "AI Media Platform"
 
-    ai_gateway_url: str = "http://127.0.0.1:9000"
+    ai_gateway_url: str
 
     postgres_db: str
     postgres_user: str
