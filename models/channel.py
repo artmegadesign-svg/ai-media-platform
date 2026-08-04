@@ -22,6 +22,12 @@ class Channel(Base):
         index=True,
     )
 
+    gateway_channel_id: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
+    )
+
     language_code: Mapped[str] = mapped_column(
         String(10),
         index=True,
