@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import json
 from uuid import UUID, uuid4, uuid5
 
 import httpx
@@ -73,6 +74,13 @@ class TelegramPublisher(PublisherInterface):
 
         if response.status_code >= 400:
             error = f"AI Gateway returned HTTP {response.status_code}"
+            try:
+                error_details = json.dumps(response.json(), ensure_ascii=False)
+            except ValueError:
+                error_details = response.text
+            if error_details:
+                error += f": {error_details}"
+
             retry_after = response.headers.get("Retry-After")
             if retry_after:
                 error += f" (Retry-After: {retry_after})"
