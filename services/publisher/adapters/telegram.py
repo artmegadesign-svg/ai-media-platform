@@ -11,6 +11,8 @@ from services.publisher.models import PublishResult
 
 
 IDEMPOTENCY_NAMESPACE = UUID("7e69fe26-cf27-4c17-88aa-28fb13980254")
+TELEGRAM_TEXT_LIMIT = 4096
+TRUNCATION_SUFFIX = "\n\n…"
 
 
 class TelegramPublisher(PublisherInterface):
@@ -38,6 +40,20 @@ class TelegramPublisher(PublisherInterface):
             raise ValueError("ChannelContent must be persisted before publication")
         return str(uuid5(IDEMPOTENCY_NAMESPACE, f"channel-content:{content.id}"))
 
+    @staticmethod
+    def truncate_text(text: str) -> str:
+        """Fit publication text within Telegram's maximum text length."""
+        if len(text) <= TELEGRAM_TEXT_LIMIT:
+            return text
+
+        content_limit = TELEGRAM_TEXT_LIMIT - len(TRUNCATION_SUFFIX)
+        candidate = text[:content_limit]
+        newline_index = candidate.rfind("\n")
+        if newline_index != -1:
+            candidate = candidate[:newline_index]
+
+        return candidate + TRUNCATION_SUFFIX
+
     def publish(self, content: ChannelContent) -> PublishResult:
         url = f"{self.gateway_url}/api/v1/telegram/publications"
         headers = {
@@ -47,7 +63,7 @@ class TelegramPublisher(PublisherInterface):
         }
         payload = {
             "gateway_channel_id": self.gateway_channel_id,
-            "text": self.text,
+            "text": self.truncate_text(self.text),
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
         }
