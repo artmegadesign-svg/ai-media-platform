@@ -54,13 +54,13 @@ def make_content(content_id=42):
     )
 
 
-def make_gateway_publisher(handler, content_id=42):
+def make_gateway_publisher(handler, content_id=42, text="<b>Publication</b>"):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return TelegramPublisher(
         gateway_url="https://gateway.example/base/",
         internal_token="internal-secret",
         gateway_channel_id="editorial-news",
-        text="<b>Publication</b>",
+        text=text,
         client=client,
     ), make_content(content_id)
 
@@ -97,6 +97,52 @@ def test_telegram_gateway_success_and_request_contract():
         "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
+
+
+def test_telegram_gateway_leaves_short_text_unchanged():
+    requests = []
+    text = "A short publication \U0001f44d"
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"external_message_id": "101"})
+
+    publisher, content = make_gateway_publisher(handler, text=text)
+    publisher.publish(content)
+
+    assert json.loads(requests[0].content)["text"] == text
+
+
+def test_telegram_gateway_truncates_long_text_at_newline():
+    requests = []
+    text = "First paragraph\n" + "x" * 4096
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"external_message_id": "101"})
+
+    publisher, content = make_gateway_publisher(handler, text=text)
+    publisher.publish(content)
+    sent_text = json.loads(requests[0].content)["text"]
+
+    assert sent_text == "First paragraph\n\n…"
+    assert len(sent_text) <= 4096
+
+
+def test_telegram_gateway_truncates_unicode_text_safely():
+    requests = []
+    text = "🙂" * 5000
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"external_message_id": "101"})
+
+    publisher, content = make_gateway_publisher(handler, text=text)
+    publisher.publish(content)
+    sent_text = json.loads(requests[0].content)["text"]
+
+    assert sent_text == "🙂" * 4093 + "\n\n…"
+    assert len(sent_text) == 4096
 
 
 def test_telegram_gateway_reuses_idempotency_key_for_repeat_request():
