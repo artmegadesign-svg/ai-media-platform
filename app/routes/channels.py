@@ -39,4 +39,6 @@ def create_channel(
         name=data.name,
         platform=data.platform,
         language_code=data.language_code,
+        gateway_channel_id=data.gateway_channel_id,
+        is_active=data.is_active,
     )
