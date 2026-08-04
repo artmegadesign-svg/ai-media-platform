@@ -45,7 +45,7 @@ class TelegramPublisher(PublisherInterface):
             "X-Request-ID": str(uuid4()),
         }
         payload = {
-            "channel_id": self.gateway_channel_id,
+            "gateway_channel_id": self.gateway_channel_id,
             "text": self.text,
             "parse_mode": "HTML",
             "disable_web_page_preview": False,

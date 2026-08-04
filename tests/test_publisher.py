@@ -92,7 +92,7 @@ def test_telegram_gateway_success_and_request_contract():
     UUID(requests[0].headers["Idempotency-Key"])
     UUID(requests[0].headers["X-Request-ID"])
     assert json.loads(requests[0].content) == {
-        "channel_id": "editorial-news",
+        "gateway_channel_id": "editorial-news",
         "text": "<b>Publication</b>",
         "parse_mode": "HTML",
         "disable_web_page_preview": False,
