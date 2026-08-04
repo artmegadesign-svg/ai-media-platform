@@ -126,7 +126,42 @@ def test_telegram_gateway_maps_http_errors(status_code):
     result = publisher.publish(content)
 
     assert result.success is False
-    assert result.error == f"AI Gateway returned HTTP {status_code}"
+    assert result.error == (
+        f'AI Gateway returned HTTP {status_code}: {{"detail": "redacted"}}'
+    )
+
+
+def test_telegram_gateway_exposes_validation_error_body():
+    validation_details = {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "gateway_channel_id"],
+                "msg": "Field required",
+            }
+        ]
+    }
+    publisher, content = make_gateway_publisher(
+        lambda request: httpx.Response(422, json=validation_details)
+    )
+
+    result = publisher.publish(content)
+
+    assert result.success is False
+    assert result.error == (
+        "AI Gateway returned HTTP 422: " + json.dumps(validation_details)
+    )
+
+
+def test_telegram_gateway_falls_back_to_text_error_body():
+    publisher, content = make_gateway_publisher(
+        lambda request: httpx.Response(502, text="upstream unavailable")
+    )
+
+    result = publisher.publish(content)
+
+    assert result.success is False
+    assert result.error == "AI Gateway returned HTTP 502: upstream unavailable"
 
 
 def test_telegram_gateway_preserves_retry_after_for_rate_limit():
@@ -141,7 +176,9 @@ def test_telegram_gateway_preserves_retry_after_for_rate_limit():
     result = publisher.publish(content)
 
     assert result.success is False
-    assert result.error == "AI Gateway returned HTTP 429 (Retry-After: 30)"
+    assert result.error == (
+        'AI Gateway returned HTTP 429: {"detail": "slow down"} (Retry-After: 30)'
+    )
 
 
 @pytest.mark.parametrize(
