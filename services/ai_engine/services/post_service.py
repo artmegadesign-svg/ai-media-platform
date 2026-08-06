@@ -1,9 +1,14 @@
+import logging
+
 from db.session import SessionLocal
 
 from models.post import Post
 from models.content_variant import ContentVariant
+from models.channel import Channel
+from models.channel_content import ChannelContent
+from services.analytics_service import AnalyticsService
 
-from services.channel_content_service import ChannelContentService
+logger = logging.getLogger(__name__)
 
 
 class PostService:
@@ -44,11 +49,6 @@ class PostService:
                 quality_issues=quality_issues
             )
 
-            db.add(post)
-            db.commit()
-            db.refresh(post)
-
-
             variants = [
                 ContentVariant(
                     post_id=post.id,
@@ -62,18 +62,31 @@ class PostService:
                 )
             ]
 
+            db.add(post)
+            db.flush()
+            for variant in variants:
+                variant.post_id = post.id
             db.add_all(variants)
-            db.commit()
-
-
-            channel_service = ChannelContentService(db)
-
-            channel_service.create_content(
-                channel_id=1,
-                post_id=post.id,
-                platform_post_id=None,
-                status="pending"
+            channels = (
+                db.query(Channel)
+                .filter(Channel.is_active.is_(True), Channel.language_code.in_(["ru", "en"]))
+                .order_by(Channel.id)
+                .all()
             )
+            db.add_all([
+                ChannelContent(channel_id=channel.id, post_id=post.id, status="pending")
+                for channel in channels
+            ])
+            db.commit()
+            db.refresh(post)
+
+            analytics = AnalyticsService()
+            try:
+                analytics.post_generated(post)
+            except Exception:
+                logger.exception("Analytics failed after post %s was committed", post.id)
+            finally:
+                analytics.close()
 
 
             return {
@@ -92,14 +105,15 @@ class PostService:
             db.close()
 
 
-    def get_latest(self, limit: int = 10):
+    def get_latest(self, limit: int = 50, offset: int = 0):
 
         db = SessionLocal()
 
         try:
             return (
                 db.query(Post)
-                .order_by(Post.id.desc())
+                .order_by(Post.created_at.desc(), Post.id.desc())
+                .offset(offset)
                 .limit(limit)
                 .all()
             )

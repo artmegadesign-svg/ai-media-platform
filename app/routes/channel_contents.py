@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
+from app.dependencies import get_db
 
 from schemas.channel_content import (
     ChannelContentCreate,
@@ -15,14 +15,6 @@ router = APIRouter(
     prefix="/channel-content",
     tags=["channel-content"],
 )
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("/", response_model=ChannelContentResponse)
@@ -46,11 +38,13 @@ def create_channel_content(
 )
 def get_channel_content(
     channel_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     service = ChannelContentService(db)
 
-    return service.get_channel_content(channel_id)
+    return service.get_channel_content(channel_id, limit=limit, offset=offset)
 
 
 @router.get(

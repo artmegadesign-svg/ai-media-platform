@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, Integer, DateTime, ForeignKey
+from sqlalchemy import String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -32,6 +32,8 @@ class ChannelContent(Base):
         String(50),
         default="pending"
     )
+
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime,

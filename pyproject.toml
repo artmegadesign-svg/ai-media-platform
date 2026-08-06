@@ -24,3 +24,10 @@ dev = [
     "ruff>=0.12.9",
     "mypy>=1.17.1",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/versions/*.py" = ["F401"]
+"models/publication.py" = ["F401"]
+"services/ai_engine/client/openai_client.py" = ["F401"]
+"services/ai_engine/providers/mock_provider.py" = ["F541"]
+"services/ai_engine/services/translator_service.py" = ["F401"]

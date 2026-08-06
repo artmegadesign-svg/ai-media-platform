@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
+from app.dependencies import get_db
 from services.channel_service import ChannelService
 from schemas.channel import ChannelCreate, ChannelResponse
 
@@ -12,20 +12,14 @@ router = APIRouter(
 )
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 @router.get("/", response_model=list[ChannelResponse])
 def get_channels(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     service = ChannelService(db)
-    return service.get_channels()
+    return service.get_channels(limit=limit, offset=offset)
 
 
 @router.post("/", response_model=ChannelResponse)

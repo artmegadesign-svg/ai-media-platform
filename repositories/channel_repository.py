@@ -11,6 +11,9 @@ class ChannelRepository(BaseRepository[Channel]):
             model=Channel,
         )
 
+    def get_page(self, limit: int, offset: int):
+        return self.db.query(Channel).order_by(Channel.created_at.desc(), Channel.id.desc()).offset(offset).limit(limit).all()
+
     def get_by_name(self, name: str):
         return (
             self.db.query(Channel)
@@ -21,6 +24,6 @@ class ChannelRepository(BaseRepository[Channel]):
     def get_active_channels(self):
         return (
             self.db.query(Channel)
-            .filter(Channel.is_active == True)
+            .filter(Channel.is_active.is_(True))
             .all()
         )

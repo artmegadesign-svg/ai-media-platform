@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.post import PostCreate, PostResponse
 from services.ai_engine.services.generator_service import GeneratorService
@@ -12,8 +12,10 @@ router = APIRouter(
 
 
 @router.get("", response_model=list[PostResponse])
-async def get_posts():
-    return PostService().get_latest()
+async def get_posts(
+    limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)
+):
+    return PostService().get_latest(limit=limit, offset=offset)
 
 
 @router.post("", response_model=PostResponse)
