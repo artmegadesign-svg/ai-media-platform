@@ -1,14 +1,23 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
+from app.dependencies import get_db
 from app.schemas.post import PostCreate, PostResponse
+from schemas.media_asset import MediaAssetResponse
 from services.ai_engine.services.generator_service import GeneratorService
 from services.ai_engine.services.post_service import PostService
+from services.media.service import MediaService
 
 
 router = APIRouter(
     prefix="/posts",
     tags=["posts"],
 )
+
+
+@router.get("/{post_id}/media", response_model=list[MediaAssetResponse])
+def get_post_media(post_id: int, db: Session = Depends(get_db)):
+    return MediaService(db).list_post_assets(post_id)
 
 
 @router.get("", response_model=list[PostResponse])

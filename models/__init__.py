@@ -4,6 +4,7 @@ from models.channel_content import ChannelContent
 from models.content_variant import ContentVariant
 from models.language import Language
 from models.metric import Metric
+from models.media_asset import MediaAsset
 from models.post import Post
 from models.publication import Publication
 
@@ -15,6 +16,7 @@ __all__ = [
     "ContentVariant",
     "Language",
     "Metric",
+    "MediaAsset",
     "Post",
     "Publication",
 ]
