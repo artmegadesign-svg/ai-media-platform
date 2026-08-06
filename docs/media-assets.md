@@ -57,3 +57,21 @@ Later phases may implement generation workers, controlled downloads, durable
 storage, language-specific variants, and publisher integration. This phase does
 not generate images, download media, scrape pages, upload to S3/CDN, or publish
 media to Telegram, and it adds no parallel publishing pipeline.
+
+## Phase 3 generation execution
+
+`MediaGenerationService` executes only the `generate_image` plans produced by
+Phase 2. A caller supplies a prompt and an `ImageGenerationProvider`; the
+provider owns vendor API calls and durable image storage and returns a public
+URL. The service then changes the existing asset from `generation_required` to
+`complete` and records the prompt, optional `ru`/`en` language, provider, and
+provider metadata for auditability.
+
+Execution is idempotent after an asset reaches `ready`: retrying returns the
+stored asset without invoking the provider again. Provider errors are recorded
+as `failed` and raised as `MediaGenerationError`, allowing a worker to decide
+when to retry. Official references and uploaded media cannot enter generation.
+
+Phase 3 adds provider-neutral orchestration only. It does not choose media
+policy again, download official media, prescribe an image vendor or storage
+backend, publish to a channel, or create a second publishing pipeline.

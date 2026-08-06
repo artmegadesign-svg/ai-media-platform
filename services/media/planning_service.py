@@ -28,6 +28,9 @@ class MediaPlanningService:
             "planning_status": "generation_required"
             if decision.strategy is MediaStrategy.GENERATE_IMAGE
             else "reference_ready",
+            "generation_status": "pending"
+            if decision.strategy is MediaStrategy.GENERATE_IMAGE
+            else None,
             "strategy": decision.strategy.value,
             "reason": decision.reason,
             # A single neutral asset is planned by default. A later phase may set
