@@ -12,10 +12,13 @@ class ChannelContentRepository(BaseRepository[ChannelContent]):
             model=ChannelContent,
         )
 
-    def get_by_channel_id(self, channel_id: int):
+    def get_by_channel_id(self, channel_id: int, limit: int = 50, offset: int = 0):
         return (
             self.db.query(ChannelContent)
             .filter(ChannelContent.channel_id == channel_id)
+            .order_by(ChannelContent.created_at.desc(), ChannelContent.id.desc())
+            .offset(offset)
+            .limit(limit)
             .all()
         )
 

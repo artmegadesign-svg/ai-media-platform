@@ -26,8 +26,8 @@ class ChannelService:
 
         return self.repository.create(channel)
 
-    def get_channels(self):
-        return self.repository.get_all()
+    def get_channels(self, limit: int = 50, offset: int = 0):
+        return self.repository.get_page(limit=limit, offset=offset)
 
     def get_active_channels(self):
         return self.repository.get_active_channels()

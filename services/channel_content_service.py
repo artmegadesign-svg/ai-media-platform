@@ -25,8 +25,8 @@ class ChannelContentService:
 
         return self.repository.create(content)
 
-    def get_channel_content(self, channel_id: int):
-        return self.repository.get_by_channel_id(channel_id)
+    def get_channel_content(self, channel_id: int, limit: int = 50, offset: int = 0):
+        return self.repository.get_by_channel_id(channel_id, limit=limit, offset=offset)
 
     def get_post_content(self, post_id: int):
         return self.repository.get_by_post_id(post_id)
