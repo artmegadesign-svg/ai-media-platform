@@ -55,18 +55,7 @@ async def create_post(data: PostCreate):
                 },
             )
 
-        saved_post = PostService().save(
-            topic=topic,
-            ru=result.get("ru_content", result.get("ru", "")),
-            en=result.get("en_content", result.get("en", "")),
-            quality_result={
-                "score": result.get("quality_score"),
-                "approved": result.get("quality_approved"),
-                "issues": result.get("quality_issues"),
-            },
-        )
-
-        return saved_post
+        return result
 
     except HTTPException:
         raise

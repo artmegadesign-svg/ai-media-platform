@@ -16,7 +16,10 @@ class GeneratorService:
                 "status": "rejected",
                 "issues": result.get("issues", []),
                 "ru_content": result.get("ru", ""),
-                "en_content": result.get("en", "")
+                "en_content": result.get("en", ""),
+                "quality_score": result.get("quality_score"),
+                "quality_approved": result.get("quality_approved"),
+                "quality_issues": result.get("quality_issues"),
             }
 
 
@@ -24,6 +27,7 @@ class GeneratorService:
             "status": "published",
             "id": result.get("id"),
             "title": result.get("title"),
+            "topic": result.get("topic"),
             "ru_content": result.get("ru"),
             "en_content": result.get("en"),
             "quality_score": result.get("quality_score"),
