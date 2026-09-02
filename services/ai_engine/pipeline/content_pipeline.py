@@ -4,11 +4,6 @@ from services.ai_engine.services.post_service import PostService
 from services.ai_engine.agents.quality_agent import QualityAgent
 from services.ai_engine.agents.strategy_agent import StrategyAgent
 
-from services.channel_service import ChannelService
-from services.channel_content_service import ChannelContentService
-from db.session import SessionLocal
-
-
 class ContentPipeline:
 
     def __init__(self):
@@ -67,29 +62,11 @@ Keywords: {', '.join(strategy_result.get('keywords', []))}
             quality_result
         )
 
-        db = SessionLocal()
-
-        try:
-            channel_service = ChannelService(db)
-            channel_content_service = ChannelContentService(db)
-
-            channels = channel_service.get_active_channels()
-
-            for channel in channels:
-                channel_content_service.create_content(
-                    channel_id=channel.id,
-                    post_id=post["id"],
-                    platform_post_id=None,
-                    status="pending"
-                )
-
-        finally:
-            db.close()
-
         return {
             "status": "published",
             "id": post["id"],
             "title": post["title"],
+            "topic": post["topic"],
             "ru": post["ru_content"],
             "en": post["en_content"],
             "quality_score": post["quality_score"],
