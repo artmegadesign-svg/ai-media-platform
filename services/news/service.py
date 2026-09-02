@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from services.news.collectors import (
     AnthropicNewsCollector,
     GoogleAINewsCollector,
@@ -28,7 +30,11 @@ class NewsService:
 
     def collect_news(self) -> list[NewsItem]:
         collected = [item for collector in self.collectors for item in collector.collect()]
-        news = self.normalizer.normalize(collected)
+        return self.process(collected)
+
+    def process(self, items: Iterable[NewsItem]) -> list[NewsItem]:
+        """Normalize, score, and rank news items supplied by a caller."""
+        news = self.normalizer.normalize(list(items))
         for item in news:
             item.score = self.scorer.score(item)
         return sorted(news, key=lambda item: item.score, reverse=True)[: self.limit]
