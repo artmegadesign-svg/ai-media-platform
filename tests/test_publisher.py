@@ -331,6 +331,7 @@ def test_publish_endpoint_selects_gateway_for_telegram(monkeypatch):
         "internal_token": "internal-secret",
         "gateway_channel_id": "editorial-news",
         "text": "Русский текст",
+        "media": None,
     }
 
 
