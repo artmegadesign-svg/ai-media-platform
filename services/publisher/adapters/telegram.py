@@ -13,6 +13,7 @@ from services.publisher.models import PublishResult
 
 IDEMPOTENCY_NAMESPACE = UUID("7e69fe26-cf27-4c17-88aa-28fb13980254")
 TELEGRAM_TEXT_LIMIT = 4096
+TELEGRAM_IMAGE_CAPTION_LIMIT = 1024
 TRUNCATION_SUFFIX = "\n\n…"
 
 
@@ -33,10 +34,6 @@ class TelegramPublisher(PublisherInterface):
         self.internal_token = internal_token
         self.gateway_channel_id = gateway_channel_id
         self.text = text
-        # Prepared here so a gateway media transport can be added without
-        # changing persistence, publication claims, or asset selection. The
-        # repository documents only the text publications contract today, so
-        # this value must not be added to that payload speculatively.
         self.media = media
         self.client = client
         self.timeout = timeout
@@ -48,12 +45,12 @@ class TelegramPublisher(PublisherInterface):
         return str(uuid5(IDEMPOTENCY_NAMESPACE, f"channel-content:{content.id}"))
 
     @staticmethod
-    def truncate_text(text: str) -> str:
-        """Fit publication text within Telegram's maximum text length."""
-        if len(text) <= TELEGRAM_TEXT_LIMIT:
+    def truncate_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
+        """Fit publication text within the applicable Telegram text limit."""
+        if len(text) <= limit:
             return text
 
-        content_limit = TELEGRAM_TEXT_LIMIT - len(TRUNCATION_SUFFIX)
+        content_limit = limit - len(TRUNCATION_SUFFIX)
         candidate = text[:content_limit]
         newline_index = candidate.rfind("\n")
         if newline_index != -1:
@@ -68,12 +65,22 @@ class TelegramPublisher(PublisherInterface):
             "Idempotency-Key": self.idempotency_key(content),
             "X-Request-ID": str(uuid4()),
         }
+        text_limit = (
+            TELEGRAM_IMAGE_CAPTION_LIMIT
+            if self.media is not None
+            else TELEGRAM_TEXT_LIMIT
+        )
         payload = {
             "gateway_channel_id": self.gateway_channel_id,
-            "text": self.truncate_text(self.text),
+            "text": self.truncate_text(self.text, text_limit),
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
         }
+        if self.media is not None:
+            payload["media"] = {
+                "type": self.media.type,
+                "url": self.media.url,
+            }
 
         try:
             if self.client is None:
