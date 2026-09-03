@@ -7,6 +7,7 @@ import httpx
 
 from models.channel_content import ChannelContent
 from services.publisher.interface import PublisherInterface
+from services.publisher.media import PublicationMedia
 from services.publisher.models import PublishResult
 
 
@@ -24,6 +25,7 @@ class TelegramPublisher(PublisherInterface):
         internal_token: str,
         gateway_channel_id: str,
         text: str,
+        media: PublicationMedia | None = None,
         client: httpx.Client | None = None,
         timeout: float = 10.0,
     ):
@@ -31,6 +33,11 @@ class TelegramPublisher(PublisherInterface):
         self.internal_token = internal_token
         self.gateway_channel_id = gateway_channel_id
         self.text = text
+        # Prepared here so a gateway media transport can be added without
+        # changing persistence, publication claims, or asset selection. The
+        # repository documents only the text publications contract today, so
+        # this value must not be added to that payload speculatively.
+        self.media = media
         self.client = client
         self.timeout = timeout
 
