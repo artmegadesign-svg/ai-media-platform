@@ -58,7 +58,7 @@ def _content(monkeypatch, approved=True):
     monkeypatch.setattr(
         QualityAgent,
         "check",
-        lambda *_: {"score": 90, "approved": approved, "issues": []},
+        lambda *_: {"score": 90, "approved": approved, "issues": None if approved else ["Rejected in test"]},
     )
 
 
