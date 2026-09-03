@@ -13,6 +13,7 @@ from models.post import Post
 from services.publisher.publisher_service import PublisherService
 from services.publisher.adapters.mock import MockPublisher
 from services.publisher.adapters.telegram import TelegramPublisher
+from services.publisher.media import PublicationMedia
 from services.publisher.models import PublishResult
 
 
@@ -54,13 +55,16 @@ def make_content(content_id=42):
     )
 
 
-def make_gateway_publisher(handler, content_id=42, text="<b>Publication</b>"):
+def make_gateway_publisher(
+    handler, content_id=42, text="<b>Publication</b>", media=None
+):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return TelegramPublisher(
         gateway_url="https://gateway.example/base/",
         internal_token="internal-secret",
         gateway_channel_id="editorial-news",
         text=text,
+        media=media,
         client=client,
     ), make_content(content_id)
 
@@ -111,6 +115,48 @@ def test_telegram_gateway_leaves_short_text_unchanged():
     publisher.publish(content)
 
     assert json.loads(requests[0].content)["text"] == text
+
+
+def test_telegram_gateway_keeps_text_only_limit_above_caption_limit():
+    requests = []
+    text = "x" * 2000
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"external_message_id": "101"})
+
+    publisher, content = make_gateway_publisher(handler, text=text)
+    publisher.publish(content)
+    payload = json.loads(requests[0].content)
+
+    assert payload["text"] == text
+    assert "media" not in payload
+
+
+def test_telegram_gateway_sends_image_and_uses_caption_limit():
+    requests = []
+    text = "🙂" * 2000
+    media = PublicationMedia(
+        asset_id=73,
+        type="image",
+        url="https://cdn.example/publication.png",
+    )
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"external_message_id": "101"})
+
+    publisher, content = make_gateway_publisher(handler, text=text, media=media)
+    publisher.publish(content)
+    payload = json.loads(requests[0].content)
+
+    assert payload["media"] == {
+        "type": "image",
+        "url": "https://cdn.example/publication.png",
+    }
+    assert "asset_id" not in payload["media"]
+    assert payload["text"] == "🙂" * 1021 + "\n\n…"
+    assert len(payload["text"]) == 1024
 
 
 def test_telegram_gateway_truncates_long_text_at_newline():
