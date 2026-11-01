@@ -29,6 +29,17 @@ def _collect_raw_news(news_service: NewsService) -> list[Any]:
     ]
 
 
+def _created_post_ids(content_results: list[dict]) -> list[int]:
+    """Return persisted Post IDs created by this cycle, preserving result order."""
+    return list(
+        dict.fromkeys(
+            post_id
+            for result in content_results
+            if (post_id := result.get("post_id")) is not None
+        )
+    )
+
+
 def run_mvp_cycle(
     *,
     news_service: NewsService | None = None,
@@ -43,6 +54,9 @@ def run_mvp_cycle(
     ``content_service.generate`` returns.  Media generation failures remain
     represented in the content results; the existing publisher decides whether
     a safe text-only publication is possible.
+
+    Publication is scoped to Post IDs returned by content generation in this
+    invocation. Existing pending publications from earlier runs are untouched.
 
     Cross-run idempotency is intentionally not implemented here.  Until a
     stable source identity is persisted, this entry point is for explicit,
@@ -59,16 +73,21 @@ def run_mvp_cycle(
     raw_news = _collect_raw_news(news)
     approved = intelligence.analyze(raw_news)
     content_results = content.generate(approved)
+    post_ids = _created_post_ids(content_results)
 
-    db = session_factory()
-    try:
-        publication_results = publisher_agent_factory(db).run()
-    finally:
-        db.close()
+    if not post_ids:
+        publication_results = []
+    else:
+        db = session_factory()
+        try:
+            publication_results = publisher_agent_factory(db).run_for_posts(post_ids)
+        finally:
+            db.close()
 
     return {
         "collected_count": len(raw_news),
         "approved_count": len(approved),
+        "post_ids": post_ids,
         "content_results": content_results,
         "publication_results": publication_results,
     }
