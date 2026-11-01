@@ -62,9 +62,14 @@ class PublisherAgentStub:
         self.events = events
         self.result = result or []
         self.error = error
+        self.post_ids = None
 
     def run(self):
+        raise AssertionError("controlled cycle must not publish all pending content")
+
+    def run_for_posts(self, post_ids):
         self.events.append("publish")
+        self.post_ids = list(post_ids)
         if self.error is not None:
             raise self.error
         return self.result
@@ -77,13 +82,18 @@ def _run(*, items=None, approved=None, content_result=None, publisher_result=Non
     approved_items = approved or [object()]
     news = NewsServiceStub(raw_items, events)
     intelligence = IntelligenceStub(approved_items, events)
-    content = ContentStub(content_result or [{"status": "published"}], events, error=content_error)
+    if content_result is None:
+        content_result = [{"status": "published", "post_id": 101}]
+    content = ContentStub(content_result, events, error=content_error)
     session = SessionStub(events)
+    agents = []
 
     def agent_factory(db):
-        return PublisherAgentStub(
+        agent = PublisherAgentStub(
             db, events, result=publisher_result or [], error=publisher_error
         )
+        agents.append(agent)
+        return agent
 
     def invoke():
         return run_mvp_cycle(
@@ -94,13 +104,13 @@ def _run(*, items=None, approved=None, content_result=None, publisher_result=Non
             publisher_agent_factory=agent_factory,
         )
 
-    return invoke, events, intelligence, content, session
+    return invoke, events, intelligence, content, session, agents
 
 
 def test_cycle_runs_all_stages_in_order_without_double_news_processing():
     raw = [object(), object()]
     publications = [object()]
-    invoke, events, intelligence, _, session = _run(
+    invoke, events, intelligence, _, session, agents = _run(
         items=raw, publisher_result=publications
     )
 
@@ -110,12 +120,14 @@ def test_cycle_runs_all_stages_in_order_without_double_news_processing():
     assert intelligence.received == raw
     assert result["collected_count"] == 2
     assert result["approved_count"] == 1
+    assert result["post_ids"] == [101]
     assert result["publication_results"] == publications
+    assert agents[0].post_ids == [101]
     assert session.closed is True
 
 
 def test_publisher_starts_only_after_content_and_media_return():
-    invoke, events, _, _, _ = _run()
+    invoke, events, _, _, _, _ = _run()
 
     invoke()
 
@@ -123,7 +135,9 @@ def test_publisher_starts_only_after_content_and_media_return():
 
 
 def test_session_closes_when_publisher_fails():
-    invoke, events, _, _, session = _run(publisher_error=RuntimeError("publish failed"))
+    invoke, events, _, _, session, _ = _run(
+        publisher_error=RuntimeError("publish failed")
+    )
 
     try:
         invoke()
@@ -137,7 +151,7 @@ def test_session_closes_when_publisher_fails():
 
 
 def test_content_failure_does_not_publish_or_retry_generation():
-    invoke, events, _, content, session = _run(
+    invoke, events, _, content, session, _ = _run(
         content_error=RuntimeError("content failed")
     )
 
@@ -154,7 +168,7 @@ def test_content_failure_does_not_publish_or_retry_generation():
 
 
 def test_media_failure_result_can_continue_to_existing_publisher_behavior():
-    invoke, events, _, _, session = _run(
+    invoke, events, _, _, session, agents = _run(
         content_result=[{
             "status": "published",
             "post_id": 1,
@@ -165,5 +179,35 @@ def test_media_failure_result_can_continue_to_existing_publisher_behavior():
     result = invoke()
 
     assert result["content_results"][0]["media_generation_status"] == "failed"
+    assert agents[0].post_ids == [1]
     assert "publish" in events
     assert session.closed is True
+
+
+def test_cycle_publishes_only_post_ids_created_by_current_content_run():
+    invoke, _, _, _, _, agents = _run(
+        content_result=[
+            {"status": "published", "post_id": 201},
+            {"status": "rejected", "post_id": None},
+            {"status": "published", "post_id": 202},
+        ]
+    )
+
+    result = invoke()
+
+    assert result["post_ids"] == [201, 202]
+    assert agents[0].post_ids == [201, 202]
+
+
+def test_cycle_with_no_created_posts_does_not_open_session_or_publish():
+    invoke, events, _, _, session, agents = _run(
+        content_result=[{"status": "rejected", "post_id": None}]
+    )
+
+    result = invoke()
+
+    assert result["post_ids"] == []
+    assert result["publication_results"] == []
+    assert "publish" not in events
+    assert agents == []
+    assert session.closed is False
