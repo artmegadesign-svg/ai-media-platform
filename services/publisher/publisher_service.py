@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Iterable
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -125,12 +125,20 @@ class PublisherService:
             )
 
     def publish_pending(self) -> list[PublishResult]:
-        ids = [
-            row[0]
-            for row in self.db.query(ChannelContent.id)
-            .filter(ChannelContent.status == "pending")
-            .all()
-        ]
+        return self._publish_pending()
+
+    def publish_pending_for_posts(self, post_ids: Iterable[int]) -> list[PublishResult]:
+        scoped_post_ids = list(dict.fromkeys(post_ids))
+        if not scoped_post_ids:
+            return []
+        return self._publish_pending(scoped_post_ids)
+
+    def _publish_pending(self, post_ids: list[int] | None = None) -> list[PublishResult]:
+        query = self.db.query(ChannelContent.id).filter(ChannelContent.status == "pending")
+        if post_ids is not None:
+            query = query.filter(ChannelContent.post_id.in_(post_ids))
+
+        ids = [row[0] for row in query.all()]
         claimed_ids = [
             content_id
             for content_id in ids
