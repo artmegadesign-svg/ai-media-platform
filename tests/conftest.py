@@ -6,6 +6,8 @@ import tempfile
 import types
 from pathlib import Path
 
+import pytest
+
 
 _TEST_DB_DIR = Path(tempfile.mkdtemp(prefix="ai_media_pytest_"))
 _TEST_DB_PATH = _TEST_DB_DIR / "test.db"
@@ -57,7 +59,46 @@ def pytest_configure(config):
     import models  # noqa: F401 - register all SQLAlchemy models on Base.metadata
 
     _engine = engine
+    _assert_test_database()
     Base.metadata.create_all(bind=_engine)
+
+
+def _assert_test_database():
+    from db.session import SessionLocal, engine
+
+    if (
+        engine.url.get_backend_name() != "sqlite"
+        or not engine.url.database
+        or Path(engine.url.database).resolve() != _TEST_DB_PATH.resolve()
+        or SessionLocal.kw.get("bind") is not engine
+    ):
+        raise RuntimeError("Refusing to run pytest against a non-isolated database")
+
+
+@pytest.fixture(autouse=True)
+def isolated_test_database():
+    """Reset the existing temporary SQLite schema before each test.
+
+    Tests and services commit their own sessions; rollback alone cannot isolate them.
+    """
+    from db.base import Base
+
+    _assert_test_database()
+    Base.metadata.drop_all(bind=_engine)
+    Base.metadata.create_all(bind=_engine)
+    yield
+
+
+@pytest.fixture
+def isolated_db(isolated_test_database):
+    from db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.rollback()
+        db.close()
 
 
 def pytest_unconfigure(config):
