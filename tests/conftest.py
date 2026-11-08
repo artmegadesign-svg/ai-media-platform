@@ -68,7 +68,8 @@ def _assert_test_database():
 
     if (
         engine.url.get_backend_name() != "sqlite"
-        or str(engine.url) != _TEST_DATABASE_URL
+        or not engine.url.database
+        or Path(engine.url.database).resolve() != _TEST_DB_PATH.resolve()
         or SessionLocal.kw.get("bind") is not engine
     ):
         raise RuntimeError("Refusing to run pytest against a non-isolated database")
