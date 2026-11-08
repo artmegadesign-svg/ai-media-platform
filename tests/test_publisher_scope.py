@@ -1,4 +1,3 @@
-from db.session import SessionLocal
 from models.channel import Channel
 from models.channel_content import ChannelContent
 from models.post import Post
@@ -47,74 +46,56 @@ def _post(topic):
     )
 
 
-def test_publish_pending_for_posts_leaves_older_pending_content_untouched():
-    db = SessionLocal()
-    try:
-        channel = Channel(
-            name="Scoped publisher test",
-            platform="web",
-            language_code="en",
-            is_active=True,
-        )
-        old_post = _post("old pending post")
-        current_post = _post("current cycle post")
-        db.add_all([channel, old_post, current_post])
-        db.flush()
+def test_publish_pending_for_posts_leaves_older_pending_content_untouched(isolated_db):
+    db = isolated_db
+    channel = Channel(
+        name="Scoped publisher test",
+        platform="web",
+        language_code="en",
+        is_active=True,
+    )
+    old_post = _post("old pending post")
+    current_post = _post("current cycle post")
+    db.add_all([channel, old_post, current_post])
+    db.flush()
 
-        old_pending = ChannelContent(
-            channel_id=channel.id,
-            post_id=old_post.id,
-            status="pending",
-        )
-        current_pending = ChannelContent(
-            channel_id=channel.id,
-            post_id=current_post.id,
-            status="pending",
-        )
-        db.add_all([old_pending, current_pending])
-        db.commit()
-        old_id = old_pending.id
-        current_id = current_pending.id
-        current_post_id = current_post.id
+    old_pending = ChannelContent(
+        channel_id=channel.id,
+        post_id=old_post.id,
+        status="pending",
+    )
+    current_pending = ChannelContent(
+        channel_id=channel.id,
+        post_id=current_post.id,
+        status="pending",
+    )
+    db.add_all([old_pending, current_pending])
+    db.commit()
+    old_id = old_pending.id
+    current_id = current_pending.id
+    current_post_id = current_post.id
 
-        published_ids = []
-        results = PublisherService(
-            db,
-            factory=RecordingFactory(published_ids),
-            analytics_factory=NoOpAnalytics,
-        ).publish_pending_for_posts([current_post_id])
+    published_ids = []
+    results = PublisherService(
+        db,
+        factory=RecordingFactory(published_ids),
+        analytics_factory=NoOpAnalytics,
+    ).publish_pending_for_posts([current_post_id])
 
-        db.expire_all()
-        assert len(results) == 1
-        assert published_ids == [current_id]
-        assert db.get(ChannelContent, current_id).status == "published"
-        assert db.get(ChannelContent, old_id).status == "pending"
-    finally:
-        db.rollback()
-        db.query(ChannelContent).filter(
-            ChannelContent.channel_id == getattr(locals().get("channel"), "id", -1)
-        ).delete(synchronize_session=False)
-        if "old_post" in locals():
-            db.delete(old_post)
-        if "current_post" in locals():
-            db.delete(current_post)
-        if "channel" in locals():
-            db.delete(channel)
-        db.commit()
-        db.close()
+    db.expire_all()
+    assert len(results) == 1
+    assert published_ids == [current_id]
+    assert db.get(ChannelContent, current_id).status == "published"
+    assert db.get(ChannelContent, old_id).status == "pending"
 
+def test_publish_pending_for_posts_with_empty_scope_does_nothing(isolated_db):
+    db = isolated_db
+    published_ids = []
+    result = PublisherService(
+        db,
+        factory=RecordingFactory(published_ids),
+        analytics_factory=NoOpAnalytics,
+    ).publish_pending_for_posts([])
 
-def test_publish_pending_for_posts_with_empty_scope_does_nothing():
-    db = SessionLocal()
-    try:
-        published_ids = []
-        result = PublisherService(
-            db,
-            factory=RecordingFactory(published_ids),
-            analytics_factory=NoOpAnalytics,
-        ).publish_pending_for_posts([])
-
-        assert result == []
-        assert published_ids == []
-    finally:
-        db.close()
+    assert result == []
+    assert published_ids == []
