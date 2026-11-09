@@ -150,5 +150,6 @@ def test_migration_is_registered_as_single_head():
 
     scripts = ScriptDirectory.from_config(Config("alembic.ini"))
 
-    assert scripts.get_heads() == ["c4d8e2f19a75"]
+    assert scripts.get_heads() == ["d8f3a1b6c902"]
+    assert scripts.get_revision("d8f3a1b6c902").down_revision == "c4d8e2f19a75"
     assert scripts.get_revision("c4d8e2f19a75").down_revision == "a7c91e4d2f10"

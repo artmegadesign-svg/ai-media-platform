@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, DateTime, ForeignKey, Text
+from sqlalchemy import String, DateTime, ForeignKey, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -8,6 +8,9 @@ from db.base import Base
 
 class ChannelContent(Base):
     __tablename__ = "channel_contents"
+    __table_args__ = (
+        Index("ux_channel_contents_post_channel", "post_id", "channel_id", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True

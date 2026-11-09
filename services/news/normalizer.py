@@ -1,9 +1,31 @@
 import re
+from hashlib import sha256
 from datetime import timezone
 from difflib import SequenceMatcher
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from services.news.models import NewsItem
+
+
+def source_identity(source_url: str) -> tuple[str, str]:
+    """Return the canonical URL and its stable Phase A identity.
+
+    Keep URL equivalence identical to NewsNormalizer; do not infer identity
+    from a title, transient NewsItem UUID or HTTP redirects.
+    """
+    if not isinstance(source_url, str) or not source_url.strip():
+        raise ValueError("source_url must be an absolute HTTP(S) URL")
+    try:
+        parts = urlsplit(source_url.strip())
+        if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+            raise ValueError("source_url must be an absolute HTTP(S) URL")
+        if parts.username is not None or parts.password is not None:
+            raise ValueError("source_url must not contain credentials")
+        _ = parts.port  # Reject malformed ports before any AI or database call.
+    except ValueError as exc:
+        raise ValueError("Invalid source_url") from exc
+    canonical = NewsNormalizer._url(source_url)
+    return canonical, sha256(canonical.encode("utf-8")).hexdigest()
 
 
 _MODEL_TERMS = (

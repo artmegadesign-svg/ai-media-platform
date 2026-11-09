@@ -1,4 +1,9 @@
 from services.orchestration.mvp_cycle import run_mvp_cycle
+from services.news.models import NewsItem
+
+
+def _news(index=0):
+    return NewsItem(source="test", title=f"Story {index}", url=f"https://example.com/{index}")
 
 
 class Collector:
@@ -78,12 +83,12 @@ class PublisherAgentStub:
 def _run(*, items=None, approved=None, content_result=None, publisher_result=None,
          content_error=None, publisher_error=None):
     events = []
-    raw_items = items or [object()]
+    raw_items = items or [_news()]
     approved_items = approved or [object()]
     news = NewsServiceStub(raw_items, events)
     intelligence = IntelligenceStub(approved_items, events)
     if content_result is None:
-        content_result = [{"status": "published", "post_id": 101}]
+        content_result = [{"status": "published", "post_created": True, "post_id": 101}]
     content = ContentStub(content_result, events, error=content_error)
     session = SessionStub(events)
     agents = []
@@ -108,7 +113,7 @@ def _run(*, items=None, approved=None, content_result=None, publisher_result=Non
 
 
 def test_cycle_runs_all_stages_in_order_without_double_news_processing():
-    raw = [object(), object()]
+    raw = [_news(1), _news(2)]
     publications = [object()]
     invoke, events, intelligence, _, session, agents = _run(
         items=raw, publisher_result=publications
@@ -171,6 +176,7 @@ def test_media_failure_result_can_continue_to_existing_publisher_behavior():
     invoke, events, _, _, session, agents = _run(
         content_result=[{
             "status": "published",
+            "post_created": True,
             "post_id": 1,
             "media_generation_status": "failed",
         }]
@@ -187,9 +193,9 @@ def test_media_failure_result_can_continue_to_existing_publisher_behavior():
 def test_cycle_publishes_only_post_ids_created_by_current_content_run():
     invoke, _, _, _, _, agents = _run(
         content_result=[
-            {"status": "published", "post_id": 201},
+            {"status": "published", "post_created": True, "post_id": 201},
             {"status": "rejected", "post_id": None},
-            {"status": "published", "post_id": 202},
+            {"status": "published", "post_created": True, "post_id": 202},
         ]
     )
 
@@ -211,3 +217,13 @@ def test_cycle_with_no_created_posts_does_not_open_session_or_publish():
     assert "publish" not in events
     assert agents == []
     assert session.closed is False
+
+
+def test_duplicate_or_missing_creation_flag_cannot_publish_old_post():
+    invoke, events, _, _, _, agents = _run(content_result=[
+        {"status": "duplicate", "post_created": False, "post_id": 1},
+        {"status": "published", "post_id": 2},
+    ])
+    assert invoke()["post_ids"] == []
+    assert "publish" not in events
+    assert agents == []

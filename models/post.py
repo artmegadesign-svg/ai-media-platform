@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, DateTime, Text, Integer, Boolean
+from sqlalchemy import String, DateTime, Text, Integer, Boolean, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -12,8 +12,12 @@ if TYPE_CHECKING:
 
 class Post(Base):
     __tablename__ = "posts"
+    __table_args__ = (Index("ux_posts_source_key", "source_key", unique=True),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     title: Mapped[str] = mapped_column(String(255))
 
