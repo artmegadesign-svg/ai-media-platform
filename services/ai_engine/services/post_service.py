@@ -1,3 +1,4 @@
+import json
 import logging
 
 from db.session import SessionLocal
@@ -11,6 +12,15 @@ from services.analytics_service import AnalyticsService
 logger = logging.getLogger(__name__)
 
 
+def _normalize_quality_issues(issues: object) -> str | None:
+    """Keep the Text/API contract independent of database driver coercion."""
+    if issues is None or isinstance(issues, str):
+        return issues
+    if isinstance(issues, list) and all(isinstance(issue, str) for issue in issues):
+        return json.dumps(issues, ensure_ascii=False) if issues else None
+    raise TypeError("quality_result.issues must be None, a string, or a list of strings")
+
+
 class PostService:
 
     def save(
@@ -21,21 +31,20 @@ class PostService:
         quality_result: dict | None = None
     ):
 
+        quality_issues = _normalize_quality_issues(
+            quality_result.get("issues") if quality_result else None
+        )
         db = SessionLocal()
 
         try:
             quality_score = None
             quality_approved = False
-            quality_issues = None
 
             if quality_result:
                 quality_score = quality_result.get("score")
                 quality_approved = quality_result.get(
                     "approved",
                     False
-                )
-                quality_issues = quality_result.get(
-                    "issues"
                 )
 
             post = Post(
