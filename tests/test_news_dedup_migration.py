@@ -6,6 +6,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -105,7 +106,7 @@ def test_full_postgresql_alembic_upgrade_from_empty_database(quality_sessions, m
     monkeypatch.setenv("DATABASE_URL", url.render_as_string(hide_password=False))
     command.upgrade(Config("alembic.ini"), "head")
     with engine.connect() as db:
-        assert db.execute(text("select version_num from alembic_version")).scalar() == REVISION
+        assert db.execute(text("select version_num from alembic_version")).scalar() == ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
     assert {"source_key", "source_url"} <= {c["name"] for c in inspect(engine).get_columns("posts")}
     assert any(i["name"] == "ux_channel_contents_post_channel" and i["unique"]
                for i in inspect(engine).get_indexes("channel_contents"))

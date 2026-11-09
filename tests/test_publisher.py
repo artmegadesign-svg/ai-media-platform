@@ -17,33 +17,28 @@ from services.publisher.media import PublicationMedia
 from services.publisher.models import PublishResult
 
 
-class FakeSession:
-    def commit(self):
-        pass
+def persist_content(db, platform="web"):
+    channel = Channel(id=1, name="News", platform=platform, language_code="ru",
+                      gateway_channel_id="editorial-news")
+    post = Post(id=2, title="Title", topic="Topic", ru_content="Русский текст", en_content="EN")
+    content = make_content()
+    db.add_all([channel, post, content])
+    db.commit()
+    return content
 
-    def refresh(self, obj):
-        pass
 
-
-def test_mock_publish():
-
-    content = ChannelContent(
-        channel_id=1,
-        post_id=1,
-        status="pending",
-    )
-
-    service = PublisherService(
-        db=FakeSession(),
-        publisher=MockPublisher(),
-    )
-
-    result = service.publish(content)
-
+def test_mock_publish(isolated_db):
+    content = persist_content(isolated_db)
+    result = PublisherService(db=isolated_db, publisher=MockPublisher()).publish(content)
     assert result.success is True
     assert content.status == "published"
     assert content.platform_post_id.startswith("mock_")
     assert isinstance(content.published_at, datetime)
+
+
+def gateway_success(message_id=101):
+    return {"status": "published", "provider": "telegram",
+            "channel_id": "editorial-news", "external_message_id": message_id}
 
 
 def make_content(content_id=42):
@@ -109,7 +104,7 @@ def test_telegram_gateway_leaves_short_text_unchanged():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={"external_message_id": "101"})
+        return httpx.Response(200, json=gateway_success())
 
     publisher, content = make_gateway_publisher(handler, text=text)
     publisher.publish(content)
@@ -123,7 +118,7 @@ def test_telegram_gateway_keeps_text_only_limit_above_caption_limit():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={"external_message_id": "101"})
+        return httpx.Response(200, json=gateway_success())
 
     publisher, content = make_gateway_publisher(handler, text=text)
     publisher.publish(content)
@@ -144,7 +139,7 @@ def test_telegram_gateway_sends_image_and_uses_caption_limit():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={"external_message_id": "101"})
+        return httpx.Response(200, json=gateway_success())
 
     publisher, content = make_gateway_publisher(handler, text=text, media=media)
     publisher.publish(content)
@@ -165,7 +160,7 @@ def test_telegram_gateway_truncates_long_text_at_newline():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={"external_message_id": "101"})
+        return httpx.Response(200, json=gateway_success())
 
     publisher, content = make_gateway_publisher(handler, text=text)
     publisher.publish(content)
@@ -181,7 +176,7 @@ def test_telegram_gateway_truncates_unicode_text_safely():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={"external_message_id": "101"})
+        return httpx.Response(200, json=gateway_success())
 
     publisher, content = make_gateway_publisher(handler, text=text)
     publisher.publish(content)
@@ -196,7 +191,7 @@ def test_telegram_gateway_reuses_idempotency_key_for_repeat_request():
 
     def handler(request):
         requests.append(request)
-        return httpx.Response(200, json={"external_message_id": "101"})
+        return httpx.Response(200, json=gateway_success())
 
     publisher, content = make_gateway_publisher(handler)
     first = publisher.publish(content)
@@ -276,8 +271,8 @@ def test_telegram_gateway_preserves_retry_after_for_rate_limit():
 @pytest.mark.parametrize(
     ("exception", "expected_error"),
     [
-        (httpx.ReadTimeout("timed out"), "AI Gateway request timed out"),
-        (httpx.ConnectError("dns failed"), "AI Gateway transport error"),
+        (httpx.ReadTimeout("timed out"), "AI Gateway delivery outcome is unknown after a transport failure"),
+        (httpx.ConnectError("dns failed"), "AI Gateway connection was not established"),
     ],
 )
 def test_telegram_gateway_maps_transport_errors(exception, expected_error):
@@ -300,7 +295,7 @@ def test_telegram_gateway_rejects_invalid_json():
     result = publisher.publish(content)
 
     assert result.success is False
-    assert result.error == "AI Gateway returned invalid JSON"
+    assert result.error == "AI Gateway returned an invalid publication response"
 
 
 def test_telegram_gateway_requires_external_message_id():
@@ -311,29 +306,10 @@ def test_telegram_gateway_requires_external_message_id():
     result = publisher.publish(content)
 
     assert result.success is False
-    assert result.error == "AI Gateway response has no external_message_id"
+    assert result.error == "AI Gateway returned an invalid publication response"
 
 
-class QueryResult:
-    def __init__(self, value):
-        self.value = value
-
-    def filter(self, *args):
-        return self
-
-    def first(self):
-        return self.value
-
-
-class RouteSession(FakeSession):
-    def __init__(self, values):
-        self.values = iter(values)
-
-    def query(self, model):
-        return QueryResult(next(self.values))
-
-
-def test_publish_endpoint_selects_gateway_for_telegram(monkeypatch):
+def test_publish_endpoint_selects_gateway_for_telegram(monkeypatch, isolated_db):
     content = make_content()
     channel = Channel(
         id=1,
@@ -356,6 +332,8 @@ def test_publish_endpoint_selects_gateway_for_telegram(monkeypatch):
             captured.update(kwargs)
 
         def publish(self, published_content):
+            assert not isolated_db.in_transaction()
+            assert isolated_db.get_bind().pool.checkedout() == 0
             return PublishResult(success=True, platform_post_id="123")
 
     monkeypatch.setattr(publish_route, "TelegramPublisher", FakeTelegramPublisher)
@@ -366,10 +344,11 @@ def test_publish_endpoint_selects_gateway_for_telegram(monkeypatch):
         publish_route.settings, "ai_gateway_internal_token", "internal-secret"
     )
 
-    response = publish_route.publish(
-        content_id=content.id,
-        db=RouteSession([content, channel, post]),
-    )
+    isolated_db.add_all([channel, post, content])
+    isolated_db.commit()
+    content_id = content.id
+    isolated_db.rollback()
+    response = publish_route.publish(content_id=content_id, db=isolated_db)
 
     assert response["platform_post_id"] == "123"
     assert captured == {
@@ -378,21 +357,13 @@ def test_publish_endpoint_selects_gateway_for_telegram(monkeypatch):
         "gateway_channel_id": "editorial-news",
         "text": "Русский текст",
         "media": None,
+        "timeout": 30,
     }
 
 
-def test_publish_endpoint_keeps_mock_for_non_telegram():
-    content = make_content()
-    channel = Channel(
-        id=1,
-        name="Website",
-        platform="web",
-        language_code="en",
-    )
-
-    response = publish_route.publish(
-        content_id=content.id,
-        db=RouteSession([content, channel]),
-    )
-
+def test_publish_endpoint_keeps_mock_for_non_telegram(isolated_db):
+    content = persist_content(isolated_db)
+    content_id = content.id
+    isolated_db.rollback()
+    response = publish_route.publish(content_id=content_id, db=isolated_db)
     assert response["platform_post_id"] == "mock_42"

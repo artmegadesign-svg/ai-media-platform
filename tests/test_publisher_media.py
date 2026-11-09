@@ -173,7 +173,7 @@ def test_publisher_failure_preserves_failed_state_and_error(db):
 
     class FailingPublisher:
         def publish(self, content):
-            return PublishResult(success=False, error="gateway unavailable")
+            return PublishResult(success=False, outcome="failed", error="gateway unavailable")
 
     result = PublisherService(db, publisher=FailingPublisher()).publish(content)
 

@@ -37,6 +37,11 @@ class ChannelContent(Base):
     )
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    gateway_http_status: Mapped[int | None] = mapped_column(nullable=True)
+    retry_after_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime,

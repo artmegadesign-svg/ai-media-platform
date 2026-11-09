@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, PositiveFloat
 
 
 class Settings(BaseSettings):
@@ -6,6 +7,7 @@ class Settings(BaseSettings):
 
     ai_gateway_url: str
     ai_gateway_internal_token: str | None = None
+    telegram_gateway_timeout_seconds: PositiveFloat = Field(default=30, allow_inf_nan=False)
 
     postgres_db: str
     postgres_user: str

@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,12 +11,15 @@ from models.channel import Channel
 from models.channel_content import ChannelContent
 from models.metric import Metric
 from models.post import Post
+from repositories.base import is_unique_conflict
 
 
 EVENT_POST_GENERATED = "post_generated"
 EVENT_PUBLICATION_ATTEMPTED = "publication_attempted"
 EVENT_PUBLICATION_SUCCEEDED = "publication_succeeded"
 EVENT_PUBLICATION_FAILED = "publication_failed"
+EVENT_PUBLICATION_UNKNOWN = "publication_unknown"
+EVENT_PUBLICATION_RECONCILED = "publication_reconciled"
 _SECRET_KEY = re.compile(r"token|secret|password|authorization|api[_-]key", re.I)
 _BEARER = re.compile(r"(?i)\bbearer\s+\S+")
 _ASSIGNMENT = re.compile(
@@ -40,9 +44,12 @@ def sanitize_metadata(value: Any, key: str | None = None) -> Any:
 class AnalyticsService:
     """Records internal domain outcomes; it has no transport/provider dependency."""
 
-    def __init__(self, db: Session | None = None):
+    def __init__(self, db: Session | None = None, *, commit: bool = True):
+        if db is None and not commit:
+            raise ValueError("Transactional Analytics requires a caller-owned session")
         self.db = db or SessionLocal()
         self._owns_session = db is None
+        self._commit = commit
 
     def close(self) -> None:
         if self._owns_session:
@@ -51,6 +58,8 @@ class AnalyticsService:
     def _record(self, *, event_key: str, event_type: str, **values: Any) -> Metric:
         existing = self.db.query(Metric).filter(Metric.event_key == event_key).first()
         if existing:
+            if existing.event_type != event_type:
+                raise ValueError("Analytics event key already has a different outcome")
             return existing
         metric = Metric(
             event_key=event_key,
@@ -60,13 +69,31 @@ class AnalyticsService:
             metadata_=sanitize_metadata(values.pop("metadata", None)),
             **values,
         )
-        self.db.add(metric)
+        if not self._commit:
+            connection = self.db.connection()
+            if (connection.dialect.name == "sqlite"
+                    and not connection.connection.driver_connection.in_transaction):
+                # sqlite3 legacy transaction mode does not BEGIN for SAVEPOINT.
+                # Ensure releasing our savepoint cannot commit the caller's work.
+                connection.exec_driver_sql("BEGIN")
         try:
+            with self.db.begin_nested():
+                self.db.add(metric)
+                self.db.flush()
+        except IntegrityError as exc:
+            if not any(is_unique_conflict(exc, name, "metrics.event_key") for name in (
+                "uq_metrics_event_key", "metrics_event_key_key",
+            )):
+                raise
+            existing = self.db.query(Metric).filter(Metric.event_key == event_key).first()
+            if existing is None:
+                raise
+            if existing.event_type != event_type:
+                raise ValueError("Analytics event key already has a different outcome")
+            return existing
+        if self._commit:
             self.db.commit()
-        except IntegrityError:
-            self.db.rollback()
-            return self.db.query(Metric).filter(Metric.event_key == event_key).one()
-        self.db.refresh(metric)
+            self.db.refresh(metric)
         return metric
 
     def post_generated(self, post: Post | int, metadata: dict | None = None) -> Metric:
@@ -107,6 +134,22 @@ class AnalyticsService:
             publication, "result", EVENT_PUBLICATION_FAILED,
             kwargs.pop("channel", None), kwargs.pop("post_id", None),
             kwargs.pop("channel_id", None), kwargs.pop("language_code", None), metadata,
+        )
+
+    def publication_reconciled(self, publication: ChannelContent | int, **kwargs: Any) -> Metric:
+        return self._publication_event(
+            publication, f"reconciled:{uuid4()}", EVENT_PUBLICATION_RECONCILED,
+            kwargs.pop("channel", None), kwargs.pop("post_id", None),
+            kwargs.pop("channel_id", None), kwargs.pop("language_code", None),
+            kwargs.pop("metadata", None),
+        )
+
+    def publication_unknown(self, publication: ChannelContent | int, **kwargs: Any) -> Metric:
+        return self._publication_event(
+            publication, "unknown", EVENT_PUBLICATION_UNKNOWN,
+            kwargs.pop("channel", None), kwargs.pop("post_id", None),
+            kwargs.pop("channel_id", None), kwargs.pop("language_code", None),
+            kwargs.pop("metadata", None),
         )
 
     def _publication_event(
