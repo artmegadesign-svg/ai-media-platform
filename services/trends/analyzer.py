@@ -3,8 +3,10 @@
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from typing import Any
 
+from services.news.normalizer import classify_category
 from services.trends.models import TrendSignal
 
 
@@ -13,7 +15,7 @@ _ENTITY_PATTERN = re.compile(
     r"GPT[-\s]?\d+(?:\.\d+)?|Claude(?:\s+\d+(?:\.\d+)?)?|Gemini(?:\s+\d+(?:\.\d+)?)?|"
     r"Llama(?:\s+\d+(?:\.\d+)?)?|Grok(?:\s+\d+(?:\.\d+)?)?|"
     r"ChatGPT|transformer|нейросет\w*|искусственн\w+ интеллект\w*|"
-    r"machine learning|artificial intelligence)\b",
+    r"machine learning|artificial intelligence|AI|ИИ)\b",
     re.IGNORECASE,
 )
 
@@ -44,19 +46,9 @@ def _display_keyword(keyword: str) -> str:
     return canonical.get(compact.casefold(), compact)
 
 
-def _category(text: str) -> str:
-    lowered = text.casefold()
-    if any(
-        word in lowered for word in ("выпуст", "релиз", "представ", "launch", "release")
-    ):
-        return "model_release"
-    if any(
-        word in lowered for word in ("исследован", "research", "paper", "benchmark")
-    ):
-        return "research"
-    if any(word in lowered for word in ("мнение", "opinion", "считает", "колонк")):
-        return "opinion"
-    return "general"
+def extract_keywords(text: str) -> set[str]:
+    """Use the same topic evidence for trends and editorial relevance."""
+    return {_display_keyword(match.group()) for match in _ENTITY_PATTERN.finditer(text)}
 
 
 class TrendAnalyzer:
@@ -64,7 +56,10 @@ class TrendAnalyzer:
 
     def analyze(self, news_items: Iterable[object]) -> list[TrendSignal]:
         topics: dict[str, dict[str, Any]] = defaultdict(
-            lambda: {"mentions": 0, "sources": set(), "categories": []}
+            lambda: {
+                "mentions": 0, "sources": set(), "categories": [],
+                "news_ids": [], "dates": [],
+            }
         )
         for index, item in enumerate(news_items):
             title = str(_value(item, "title", default="") or "")
@@ -72,20 +67,28 @@ class TrendAnalyzer:
                 _value(item, "content", "description", "summary", default="") or ""
             )
             text = f"{title} {body}"
-            explicit_category = _value(item, "category")
-            category = str(explicit_category or _category(text))
+            category = classify_category(text, _value(item, "category"))
             source = str(_value(item, "source", "source_name", "url", default=index))
+            news_id = _value(item, "news_id", "id")
+            published = _value(item, "published_at")
+            if isinstance(published, datetime):
+                published = (
+                    published.replace(tzinfo=timezone.utc)
+                    if published.tzinfo is None else published.astimezone(timezone.utc)
+                )
             # One article is one mention, even if its title repeats the entity.
-            matches = {
-                _display_keyword(match.group())
-                for match in _ENTITY_PATTERN.finditer(text)
-            }
-            for keyword in matches:
+            for keyword in sorted(extract_keywords(text)):
                 record = topics[keyword.casefold()]
+                if news_id is not None:
+                    if news_id in record["news_ids"]:
+                        continue
+                    record["news_ids"].append(news_id)
                 record["keyword"] = keyword
                 record["mentions"] += 1
                 record["sources"].add(source)
                 record["categories"].append(category)
+                if isinstance(published, datetime):
+                    record["dates"].append(published)
 
         priority = {"model_release": 3, "research": 2, "general": 1, "opinion": 0}
         return [
@@ -96,6 +99,8 @@ class TrendAnalyzer:
                 category=max(
                     record["categories"], key=lambda value: priority.get(value, 1)
                 ),
+                news_ids=record["news_ids"],
+                latest_published_at=max(record["dates"], default=None),
             )
             for record in topics.values()
         ]

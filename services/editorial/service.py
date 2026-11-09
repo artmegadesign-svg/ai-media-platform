@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from services.editorial.evaluator import EditorialEvaluator, _value
+from services.editorial.evaluator import EditorialEvaluator, select_trend
 from services.editorial.models import EditorialDecision
 from services.editorial.scorer import EditorialScorer
 
@@ -56,19 +56,4 @@ class EditorialService:
 
     @staticmethod
     def _matching_trend(news: object, trends: list[object]) -> object | None:
-        news_id = _value(news, "news_id", "id")
-        topic = _value(news, "topic", "category")
-
-        def matches(trend: object) -> bool:
-            trend_news_id = _value(trend, "news_id")
-            if trend_news_id is not None:
-                return trend_news_id == news_id
-            trend_topic = _value(trend, "topic", "category")
-            return topic is not None and trend_topic == topic
-
-        candidates = [trend for trend in trends if matches(trend)]
-        return max(
-            candidates,
-            key=lambda trend: float(_value(trend, "trend_score", "score", "growth", default=0)),
-            default=None,
-        )
+        return select_trend(news, trends)

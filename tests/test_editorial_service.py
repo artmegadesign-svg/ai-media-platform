@@ -1,4 +1,7 @@
+import pytest
+
 from services.editorial.service import EditorialService
+from services.trends.models import TrendSignal
 
 
 def _news(news_id: int, category: str, factor: int) -> dict[str, object]:
@@ -47,3 +50,35 @@ def test_service_uses_strongest_matching_topic_trend():
     ]
 
     assert EditorialService().evaluate(news, trends)[0].score == 69
+
+
+def test_membership_prevents_category_only_matches_and_selects_highest_growth_score():
+    news = _news("n-1", "research", 60)
+    unrelated = TrendSignal(
+        keyword="Gemini", mentions=1, source_count=1, category="research",
+        news_ids=["n-2"], growth_score=100,
+    )
+    weak = unrelated.model_copy(update={"news_ids": ["n-1"], "growth_score": 20})
+    strong = unrelated.model_copy(update={"news_ids": ["n-1"], "growth_score": 90})
+    unlinked = unrelated.model_copy(update={"news_ids": []})
+
+    service = EditorialService()
+
+    assert service._matching_trend(news, [unrelated, weak, strong, unlinked]) is strong
+    assert service.evaluate([news], [unrelated, weak, strong, unlinked])[0].score == 69
+    assert service._matching_trend(news, [unrelated, unlinked]) is None
+    assert service._matching_trend(news, [{"category": "research", "score": 100}]) is None
+
+
+@pytest.mark.parametrize(("score", "published", "priority"), [
+    (69.99, False, "low"), (70, True, "normal"),
+    (84.99, True, "normal"), (85, True, "high"),
+])
+def test_publication_and_priority_thresholds_are_unchanged(score, published, priority):
+    decision = EditorialService().evaluate(
+        [_news("n-1", "research", score)], [{"news_id": "n-1", "growth_score": score}]
+    )[0]
+
+    assert decision.score == score
+    assert decision.publish is published
+    assert decision.priority == priority
