@@ -116,7 +116,12 @@ class PublisherService:
 
     @staticmethod
     def _normalize_result(result: PublishResult) -> PublishResult:
-        if result.success and result.platform_post_id and result.outcome in (None, "published"):
+        platform_post_id = result.platform_post_id
+        if (result.success
+                and isinstance(platform_post_id, str)
+                and platform_post_id.strip()
+                and len(platform_post_id) <= 255
+                and result.outcome in (None, "published")):
             return result.model_copy(update={"outcome": "published"})
         if not result.success and result.outcome in ("failed", "unknown"):
             return result.model_copy(update={"error": PublisherService._safe_error(

@@ -520,3 +520,56 @@ def test_unrecognized_or_contradictory_rejection_is_unknown(body):
         result = TelegramPublisher('https://gateway.example', 'test-only', 'audit', 'Text', client=client).publish(
             PublicationReference(1, 1, 1))
     assert result.outcome == 'unknown'
+
+
+@pytest.mark.parametrize('outcome', [None, 'published'])
+@pytest.mark.parametrize('platform_post_id,valid', [
+    (None, False), ('', False), (' ', False), ('\t\n', False),
+    ('x' * 255, True), ('x' * 256, False), ('123', True), ('mock_42', True),
+    (' 123 ', True), (123, False), (True, False),
+])
+def test_normalize_success_requires_nonblank_bounded_string_id(platform_post_id, valid, outcome):
+    # Also exercise runtime type checks when validation was bypassed by a provider.
+    original = PublishResult.model_construct(
+        success=True, platform_post_id=platform_post_id, outcome=outcome,
+    )
+    result = PublisherService._normalize_result(original)
+    assert result.success is valid
+    assert original.platform_post_id == platform_post_id
+    assert original.outcome == outcome
+    if valid:
+        assert result.outcome == 'published'
+        assert result.platform_post_id == platform_post_id  # Never trim/coerce an ID.
+    else:
+        assert result.outcome == 'unknown'
+        assert result.error_code == 'publisher_invalid_result'
+        assert result.platform_post_id is None
+
+
+@pytest.mark.parametrize('platform_post_id,valid', [
+    (None, False), ('', False), (' ', False), ('\t\n', False),
+    ('x' * 255, True), ('x' * 256, False), ('123', True), ('mock_42', True), (' 123 ', True),
+])
+def test_provider_success_id_validation_persists_once(sessions, platform_post_id, valid):
+    seed(sessions, 1)
+    sent = []
+
+    def send(reference):
+        sent.append(reference.id)
+        return PublishResult(success=True, platform_post_id=platform_post_id)
+
+    publisher = service(sessions, send)
+    result = publisher.publish_pending()[0]
+    assert result.success is valid
+    expected_status = 'published' if valid else 'unknown'
+    assert states(sessions) == [(expected_status, platform_post_id if valid else None)]
+    assert events(sessions) == [
+        'publication_attempted', 'publication_succeeded' if valid else 'publication_unknown',
+    ]
+    if not valid:
+        row = publisher.inspect(1)
+        assert row['error_code'] == 'publisher_invalid_result'
+        assert row['published_at'] is None
+    assert publisher.publish_pending() == []
+    assert publisher.publish(PublicationReference(1, 1, 1)).error_code == 'not_pending'
+    assert sent == [1]
