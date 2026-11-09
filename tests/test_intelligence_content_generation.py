@@ -97,8 +97,8 @@ def test_each_approved_result_is_generated_at_most_once():
     calls = []
 
     class RecordingGenerator:
-        def generate(self, topic):
-            calls.append(topic)
+        def generate(self, topic, *, source_url=None):
+            calls.append((topic, source_url))
             return {"status": "published", "topic": topic}
 
     news = [
@@ -112,7 +112,7 @@ def test_each_approved_result_is_generated_at_most_once():
 
     generated = IntelligenceContentGenerationService(RecordingGenerator()).generate(results)
 
-    assert calls == ["First", "Second"]
+    assert calls == [(item.title, item.url) for item in news]
     assert len(generated) == 2
 
 
@@ -121,7 +121,7 @@ def test_rejected_intelligence_is_not_sent_to_generator():
     approved = _intelligence(now).analyze([_news(now, score=0)])
 
     class FailingGenerator:
-        def generate(self, topic):
+        def generate(self, topic, *, source_url=None):
             raise AssertionError("generator must not be called")
 
     assert approved == []

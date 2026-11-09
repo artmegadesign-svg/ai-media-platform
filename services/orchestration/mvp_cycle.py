@@ -1,14 +1,15 @@
 """Run one controlled AMP MVP end-to-end cycle.
 
 This module intentionally provides only an explicit, synchronous entry point.  It
-must not be scheduled or run concurrently: cross-run idempotency is not yet
-provided by the persistence model.
+is still for controlled runs: Phase A deduplicates persisted sources but does not
+reserve AI work or recover an interrupted run/backlog.
 """
 
 from collections.abc import Callable
 from typing import Any
 
 from db.session import SessionLocal
+from services.ai_engine.services.post_service import PostService
 from services.editorial.service import EditorialService
 from services.intelligence.content_generation_service import (
     IntelligenceContentGenerationService,
@@ -16,6 +17,7 @@ from services.intelligence.content_generation_service import (
 from services.intelligence.factory import create_intelligence_content_generation_service
 from services.intelligence.service import IntelligenceService
 from services.news.service import NewsService
+from services.news.normalizer import source_identity
 from services.publisher.agent import PublisherAgent
 from services.trends.service import TrendService
 
@@ -35,6 +37,7 @@ def _created_post_ids(content_results: list[dict]) -> list[int]:
         dict.fromkeys(
             post_id
             for result in content_results
+            if result.get("post_created") is True
             if (post_id := result.get("post_id")) is not None
         )
     )
@@ -58,9 +61,9 @@ def run_mvp_cycle(
     Publication is scoped to Post IDs returned by content generation in this
     invocation. Existing pending publications from earlier runs are untouched.
 
-    Cross-run idempotency is intentionally not implemented here.  Until a
-    stable source identity is persisted, this entry point is for explicit,
-    non-concurrent controlled runs only.
+    Persisted sources are skipped before limits and AI. Concurrent calls may
+    still spend AI twice; the database prevents duplicate Posts. No automatic
+    recovery of rejected, interrupted or pending work is provided in Phase A.
     """
     news = news_service if news_service is not None else NewsService()
     intelligence = intelligence_service or IntelligenceService(
@@ -68,11 +71,16 @@ def run_mvp_cycle(
         TrendService(),
         EditorialService(),
     )
-    content = content_service or create_intelligence_content_generation_service()
-
     raw_news = _collect_raw_news(news)
-    approved = intelligence.analyze(raw_news)
-    content_results = content.generate(approved)
+    keyed_news = [(item, source_identity(item.url)[1]) for item in raw_news]
+    existing = PostService().get_existing_source_keys(key for _, key in keyed_news)
+    unseen = [item for item, key in keyed_news if key not in existing]
+    approved = intelligence.analyze(unseen) if unseen else []
+    if approved:
+        content = content_service or create_intelligence_content_generation_service()
+        content_results = content.generate(approved)
+    else:
+        content_results = []
     post_ids = _created_post_ids(content_results)
 
     if not post_ids:

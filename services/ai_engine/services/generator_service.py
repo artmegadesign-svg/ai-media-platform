@@ -7,9 +7,12 @@ class GeneratorService:
         self.pipeline = ContentPipeline()
 
 
-    def generate(self, topic: str) -> dict:
+    def generate(self, topic: str, *, source_url: str | None = None) -> dict:
 
-        result = self.pipeline.generate_full_content(topic)
+        result = self.pipeline.generate_full_content(topic, source_url=source_url)
+
+        if result.get("status") == "duplicate":
+            return result
 
         if result.get("status") == "rejected":
             return {
@@ -24,6 +27,7 @@ class GeneratorService:
 
 
         return {
+            "post_created": result["post_created"],
             "status": "published",
             "id": result.get("id"),
             "title": result.get("title"),

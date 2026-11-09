@@ -3,6 +3,7 @@ from services.ai_engine.services.translator_service import AITranslatorService
 from services.ai_engine.services.post_service import PostService
 from services.ai_engine.agents.quality_agent import QualityAgent
 from services.ai_engine.agents.strategy_agent import StrategyAgent
+from services.news.normalizer import source_identity
 
 class ContentPipeline:
 
@@ -13,7 +14,13 @@ class ContentPipeline:
         self.quality = QualityAgent()
         self.storage = PostService()
 
-    def generate_full_content(self, topic: str):
+    def generate_full_content(self, topic: str, *, source_url: str | None = None):
+
+        if source_url is not None:
+            canonical_url, key = source_identity(source_url)
+            existing = self.storage.find_by_source_key(key)
+            if existing is not None:
+                return self.storage.duplicate_result(existing, canonical_url)
 
         strategy_result = self.strategy.analyze(topic)
 
@@ -59,10 +66,15 @@ Keywords: {', '.join(strategy_result.get('keywords', []))}
             topic,
             ru,
             en,
-            quality_result
+            quality_result,
+            source_url=source_url,
         )
 
+        if not post["post_created"]:
+            return post
+
         return {
+            "post_created": True,
             "status": "published",
             "id": post["id"],
             "title": post["title"],

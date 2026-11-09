@@ -3,13 +3,29 @@ from datetime import datetime
 import pytest
 
 from services.news.models import NewsItem
-from services.news.normalizer import NewsNormalizer
+from services.news.normalizer import NewsNormalizer, source_identity
 
 
 def _news(title: str, url: str) -> NewsItem:
     return NewsItem(
         source=" OpenAI ", title=title, url=url, published_at=datetime(2026, 8, 25)
     )
+
+
+def test_source_identity_reuses_canonicalization_and_ignores_transient_ids():
+    first = source_identity("https://OPENAI.com/story/?utm_source=feed#section")
+    assert first == source_identity("https://openai.com/story")
+    assert first[0] == "https://openai.com/story"
+    assert len(first[1]) == 64
+    assert first == source_identity(first[0])
+    assert first != source_identity("https://openai.com/other")
+
+
+@pytest.mark.parametrize("url", [None, "", " ", "/relative", "ftp://example.com/a",
+                                    "https://user:password@example.com/a", "https://example.com:bad/a"])
+def test_invalid_source_identity_fails_closed(url):
+    with pytest.raises(ValueError):
+        source_identity(url)
 
 
 def test_normalizer_removes_duplicate_canonical_urls():

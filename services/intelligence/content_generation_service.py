@@ -16,7 +16,7 @@ from services.media.resolver import MediaStrategy
 
 
 class GeneratorServiceProtocol(Protocol):
-    def generate(self, topic: str) -> dict: ...
+    def generate(self, topic: str, *, source_url: str | None = None) -> dict: ...
 
 
 class IntelligenceContentGenerationService:
@@ -55,13 +55,13 @@ class IntelligenceContentGenerationService:
             if not topic:
                 continue
 
-            content = self.generator.generate(topic)
+            content = self.generator.generate(topic, source_url=result.news.url)
             orchestration = {
                 **content,
                 "source_id": str(result.news.id),
                 "source_url": result.news.url,
                 "content_generation_status": content.get("status"),
-                "post_id": content.get("id"),
+                "post_id": content.get("id") if content.get("post_created") is True else None,
                 "media_asset_id": None,
                 "media_strategy": None,
                 "media_generation_status": "not_started",
@@ -69,7 +69,7 @@ class IntelligenceContentGenerationService:
             }
 
             # A rejection has no persisted Post and must never enter media flow.
-            if content.get("status") == "rejected" or content.get("id") is None:
+            if orchestration["post_id"] is None:
                 generated.append(orchestration)
                 continue
 
