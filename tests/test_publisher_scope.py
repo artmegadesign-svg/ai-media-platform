@@ -23,6 +23,9 @@ class RecordingFactory:
 
 
 class NoOpAnalytics:
+    def __init__(self, **kwargs):
+        pass
+
     def publication_attempted(self, *args, **kwargs):
         pass
 
@@ -74,6 +77,7 @@ def test_publish_pending_for_posts_leaves_older_pending_content_untouched(isolat
     old_id = old_pending.id
     current_id = current_pending.id
     current_post_id = current_post.id
+    db.rollback()  # End the test's ID lookup transaction before Publisher I/O.
 
     published_ids = []
     results = PublisherService(

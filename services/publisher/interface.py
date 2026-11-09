@@ -1,8 +1,6 @@
 from abc import ABC, abstractmethod
 
-from models.channel_content import ChannelContent
-
-from services.publisher.models import PublishResult
+from services.publisher.models import PublicationReference, PublishResult
 
 
 class PublisherInterface(ABC):
@@ -10,6 +8,6 @@ class PublisherInterface(ABC):
     @abstractmethod
     def publish(
         self,
-        content: ChannelContent,
+        content: PublicationReference,
     ) -> PublishResult:
         pass

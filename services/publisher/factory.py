@@ -41,6 +41,7 @@ class PublisherFactory:
             gateway_channel_id=channel.gateway_channel_id,
             text=text,
             media=media,
+            timeout=settings.telegram_gateway_timeout_seconds,
         )
 
 

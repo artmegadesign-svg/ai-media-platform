@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.dependencies import get_db
 from models.channel_content import ChannelContent
 from services.publisher.publisher_service import PublisherService
+from services.publisher.models import PublicationReference
 from services.publisher.factory import publisher_factory
 from services.publisher.factory import settings  # noqa: F401 - legacy injection seam
 
@@ -15,14 +16,21 @@ router = APIRouter()
 
 @router.post("/publish/{content_id}")
 def publish(content_id: int, db: Session = Depends(get_db)):
+    if db.new or db.dirty or db.deleted:
+        raise ValueError("Publisher cannot run with uncommitted caller changes")
+    if db.in_transaction():
+        raise ValueError("Publish endpoint requires a fresh request session")
     if hasattr(db, "get"):
         content = db.get(ChannelContent, content_id)
     else:
         content = db.query(ChannelContent).filter(ChannelContent.id == content_id).first()
     if content is None:
         raise HTTPException(status_code=404, detail="Content not found")
+    reference = PublicationReference(content.id, content.post_id, content.channel_id)
+    db.rollback()  # This endpoint owns only the read above. No ORM data crosses I/O.
     publisher_factory.telegram_publisher_class = TelegramPublisher
-    result = PublisherService(db=db, factory=publisher_factory).publish(content)
+    result = PublisherService(db=db, factory=publisher_factory).publish(reference)
+    db.refresh(content)
     return {
         "success": result.success,
         "content_id": content.id,

@@ -1,16 +1,14 @@
 from datetime import datetime, timezone
 
-from models.channel_content import ChannelContent
-
 from services.publisher.interface import PublisherInterface
-from services.publisher.models import PublishResult
+from services.publisher.models import PublicationReference, PublishResult
 
 
 class MockPublisher(PublisherInterface):
 
     def publish(
         self,
-        content: ChannelContent,
+        content: PublicationReference,
     ) -> PublishResult:
 
         content_id = getattr(content, "id", None)

@@ -1,14 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import json
 from uuid import UUID, uuid4, uuid5
 
 import httpx
 
-from models.channel_content import ChannelContent
 from services.publisher.interface import PublisherInterface
 from services.publisher.media import PublicationMedia
-from services.publisher.models import PublishResult
+from services.publisher.models import PublicationReference, PublishResult
 
 
 IDEMPOTENCY_NAMESPACE = UUID("7e69fe26-cf27-4c17-88aa-28fb13980254")
@@ -28,7 +27,7 @@ class TelegramPublisher(PublisherInterface):
         text: str,
         media: PublicationMedia | None = None,
         client: httpx.Client | None = None,
-        timeout: float = 10.0,
+        timeout: float = 30.0,
     ):
         self.gateway_url = gateway_url.rstrip("/")
         self.internal_token = internal_token
@@ -39,7 +38,7 @@ class TelegramPublisher(PublisherInterface):
         self.timeout = timeout
 
     @staticmethod
-    def idempotency_key(content: ChannelContent) -> str:
+    def idempotency_key(content: PublicationReference) -> str:
         if content.id is None:
             raise ValueError("ChannelContent must be persisted before publication")
         return str(uuid5(IDEMPOTENCY_NAMESPACE, f"channel-content:{content.id}"))
@@ -58,7 +57,7 @@ class TelegramPublisher(PublisherInterface):
 
         return candidate + TRUNCATION_SUFFIX
 
-    def publish(self, content: ChannelContent) -> PublishResult:
+    def publish(self, content: PublicationReference) -> PublishResult:
         url = f"{self.gateway_url}/api/v1/telegram/publications"
         headers = {
             "Authorization": f"Bearer {self.internal_token}",
@@ -97,49 +96,100 @@ class TelegramPublisher(PublisherInterface):
                     json=payload,
                     timeout=self.timeout,
                 )
-        except httpx.TimeoutException:
-            return PublishResult(success=False, error="AI Gateway request timed out")
-        except httpx.TransportError:
-            return PublishResult(success=False, error="AI Gateway transport error")
+        except (httpx.PoolTimeout, httpx.ConnectTimeout, httpx.ConnectError) as exc:
+            return PublishResult(
+                success=False, outcome="failed", error_code={
+                    httpx.PoolTimeout: "gateway_pool_timeout",
+                    httpx.ConnectTimeout: "gateway_connect_timeout",
+                }.get(type(exc), "gateway_not_connected"),
+                error="AI Gateway connection was not established",
+            )
+        except httpx.TransportError as exc:
+            return PublishResult(
+                success=False, outcome="unknown", error_code={
+                    httpx.ReadTimeout: "gateway_read_timeout",
+                    httpx.WriteTimeout: "gateway_write_timeout",
+                    httpx.ReadError: "gateway_read_error",
+                    httpx.WriteError: "gateway_write_error",
+                    httpx.RemoteProtocolError: "gateway_protocol_error",
+                }.get(type(exc), "gateway_transport_unknown"),
+                error="AI Gateway delivery outcome is unknown after a transport failure",
+            )
 
-        if response.status_code >= 400:
+        retry_after_at = self._retry_after(response.headers.get("Retry-After"))
+        if response.status_code != 200:
+            # 409 can refer to an already-published operation; 5xx can follow a send.
             error = f"AI Gateway returned HTTP {response.status_code}"
             try:
-                error_details = json.dumps(response.json(), ensure_ascii=False)
+                data = response.json()
+                details = json.dumps(data, ensure_ascii=False)
             except ValueError:
-                error_details = response.text
-            if error_details:
-                error += f": {error_details}"
-
-            retry_after = response.headers.get("Retry-After")
-            if retry_after:
-                error += f" (Retry-After: {retry_after})"
-            return PublishResult(success=False, error=error)
+                data = None
+                details = response.text
+            rejected = (
+                response.status_code in {401, 403, 404, 422, 429}
+                and isinstance(data, dict)
+                and isinstance(data.get("detail"), (str, list))
+                and not any(key in data for key in (
+                    "external_message_id", "status", "provider", "channel_id",
+                ))
+            )
+            if details:
+                error += f": {details}"
+            if response.headers.get("Retry-After"):
+                error += f" (Retry-After: {response.headers['Retry-After']})"
+            return PublishResult(
+                success=False, outcome="failed" if rejected else "unknown",
+                error_code="gateway_rejected" if rejected else "gateway_response_unknown",
+                gateway_http_status=response.status_code, error=error,
+                retry_after_at=retry_after_at,
+            )
 
         try:
             data = response.json()
         except ValueError:
+            data = None
+        if not (
+            isinstance(data, dict)
+            and data.get("status") == "published"
+            and data.get("provider") == "telegram"
+            and data.get("channel_id") == self.gateway_channel_id
+            and type(data.get("external_message_id")) is int
+            and data["external_message_id"] > 0
+        ):
             return PublishResult(
-                success=False, error="AI Gateway returned invalid JSON"
+                success=False, outcome="unknown", error_code="gateway_invalid_response",
+                gateway_http_status=200,
+                error="AI Gateway returned an invalid publication response",
             )
-
-        external_message_id = data.get("external_message_id")
-        if external_message_id is None or str(external_message_id).strip() == "":
-            return PublishResult(
-                success=False,
-                error="AI Gateway response has no external_message_id",
-            )
+        external_message_id = data["external_message_id"]
 
         published_at = datetime.now(timezone.utc)
         date_header = response.headers.get("Date")
         if date_header:
             try:
-                published_at = parsedate_to_datetime(date_header)
+                parsed = parsedate_to_datetime(date_header)
+                if parsed.tzinfo is not None:
+                    published_at = parsed.astimezone(timezone.utc)
             except (TypeError, ValueError):
                 pass
 
         return PublishResult(
-            success=True,
+            success=True, outcome="published", gateway_http_status=200,
             platform_post_id=str(external_message_id),
             published_at=published_at,
         )
+
+    @staticmethod
+    def _retry_after(value: str | None) -> datetime | None:
+        if value is None:
+            return None
+        try:
+            if value.strip().isdigit():
+                return datetime.now(timezone.utc) + timedelta(seconds=int(value.strip()))
+            parsed = parsedate_to_datetime(value)
+            if parsed.tzinfo is None:
+                return None
+            return parsed.astimezone(timezone.utc)
+        except (ValueError, TypeError, OverflowError):
+            return None
