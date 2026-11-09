@@ -4,9 +4,20 @@ import shutil
 import sys
 import tempfile
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(params=[
+    datetime(2026, 8, 25, 23, 59, 59, tzinfo=timezone.utc),
+    datetime(2026, 8, 26, 0, 0, 1, tzinfo=timezone.utc),
+], ids=["before-utc-midnight", "after-utc-midnight"])
+def fixed_editorial_now(request, monkeypatch):
+    """Keep publication fixtures and the scorer on the same controlled clock."""
+    monkeypatch.setattr("services.trends.scorer._utc_now", lambda: request.param)
+    return request.param
 
 
 _TEST_DB_DIR = Path(tempfile.mkdtemp(prefix="ai_media_pytest_"))

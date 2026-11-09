@@ -3,6 +3,7 @@
 from collections.abc import Iterable
 from typing import Any, Protocol
 
+from services.editorial.evaluator import select_trend
 from services.editorial.models import EditorialDecision
 from services.intelligence.models import IntelligenceResult
 
@@ -60,11 +61,10 @@ class IntelligenceService:
             return []
 
         news_by_id = self._index(news, "news_id", "id")
-        trends_by_id = self._index(trends, "news_id")
         results = [
             IntelligenceResult(
                 news=news_by_id[decision.news_id],
-                trend=trends_by_id.get(decision.news_id),
+                trend=select_trend(news_by_id[decision.news_id], trends),
                 editorial=decision,
             )
             for decision in decisions

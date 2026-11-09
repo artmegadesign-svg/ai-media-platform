@@ -16,7 +16,8 @@ class TrendService:
 
     def analyze(self, news_items: Iterable[object]) -> list[TrendSignal]:
         signals = (
-            self.scorer.score(signal) for signal in self.analyzer.analyze(news_items)
+            self.scorer.score(signal, signal.latest_published_at)
+            for signal in self.analyzer.analyze(news_items)
         )
         return sorted(
             signals,
