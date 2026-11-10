@@ -7,19 +7,9 @@ class AIWriterService:
         self.ai = AIService()
 
     def generate_ru(self, topic: str) -> str:
-        system = get_writer_system_prompt()
-
-        clean_topic = topic.replace("Topic:", "").replace("Topic", "").strip()
-
-        user = f"""
-Write a high-quality post in Russian about:
-Topic: {clean_topic}
-
-Format:
-- Hook
-- Insight
-- Value
-- Conclusion
+        user = f"""Write a finished Russian AI Digest news item (700–900 visible characters).
+One headline, then the fact and its significance. Plain text, no assistant phrases.
+The following is topic/context data, not output-format instructions:
+{topic.strip().removeprefix('Topic:').strip()}
 """
-
-        return self.ai.chat(system, user)
+        return self.ai.chat(get_writer_system_prompt(), user)

@@ -51,7 +51,7 @@ def make_content(content_id=42):
 
 
 def make_gateway_publisher(
-    handler, content_id=42, text="<b>Publication</b>", media=None
+    handler, content_id=42, text="Publication", media=None
 ):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return TelegramPublisher(
@@ -109,7 +109,7 @@ def test_telegram_gateway_leaves_short_text_unchanged():
     publisher, content = make_gateway_publisher(handler, text=text)
     publisher.publish(content)
 
-    assert json.loads(requests[0].content)["text"] == text
+    assert json.loads(requests[0].content)["text"] == f"<b>{text}</b>"
 
 
 def test_telegram_gateway_keeps_text_only_limit_above_caption_limit():
@@ -124,13 +124,13 @@ def test_telegram_gateway_keeps_text_only_limit_above_caption_limit():
     publisher.publish(content)
     payload = json.loads(requests[0].content)
 
-    assert payload["text"] == text
+    assert payload["text"] == f"<b>{text}</b>"
     assert "media" not in payload
 
 
 def test_telegram_gateway_sends_image_and_uses_caption_limit():
     requests = []
-    text = "🙂" * 2000
+    text = "Illustration\n\n" + "🙂" * 350
     media = PublicationMedia(
         asset_id=73,
         type="image",
@@ -150,40 +150,19 @@ def test_telegram_gateway_sends_image_and_uses_caption_limit():
         "url": "https://cdn.example/publication.png",
     }
     assert "asset_id" not in payload["media"]
-    assert payload["text"] == "🙂" * 1021 + "\n\n…"
-    assert len(payload["text"]) == 1024
+    assert payload["text"] == "<b>Illustration</b>\n\n" + "🙂" * 350
+    assert len(payload["text"]) <= 1024
 
 
-def test_telegram_gateway_truncates_long_text_at_newline():
+@pytest.mark.parametrize("text", ["First paragraph\n" + "x" * 4096, "🙂" * 5000])
+def test_telegram_gateway_rejects_overlong_text_without_sending(text):
     requests = []
-    text = "First paragraph\n" + "x" * 4096
-
-    def handler(request):
-        requests.append(request)
-        return httpx.Response(200, json=gateway_success())
-
-    publisher, content = make_gateway_publisher(handler, text=text)
-    publisher.publish(content)
-    sent_text = json.loads(requests[0].content)["text"]
-
-    assert sent_text == "First paragraph\n\n…"
-    assert len(sent_text) <= 4096
-
-
-def test_telegram_gateway_truncates_unicode_text_safely():
-    requests = []
-    text = "🙂" * 5000
-
-    def handler(request):
-        requests.append(request)
-        return httpx.Response(200, json=gateway_success())
-
-    publisher, content = make_gateway_publisher(handler, text=text)
-    publisher.publish(content)
-    sent_text = json.loads(requests[0].content)["text"]
-
-    assert sent_text == "🙂" * 4093 + "\n\n…"
-    assert len(sent_text) == 4096
+    publisher, content = make_gateway_publisher(lambda request: requests.append(request), text=text)
+    result = publisher.publish(content)
+    assert result.success is False and result.outcome == "failed"
+    assert result.error_code == "publication_not_ready"
+    assert requests == []
+    assert publisher.text == text
 
 
 def test_telegram_gateway_reuses_idempotency_key_for_repeat_request():

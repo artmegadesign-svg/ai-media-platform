@@ -134,9 +134,9 @@ def test_all_processed_does_not_initialize_content_or_publisher(quality_sessions
 
 
 def test_manual_generation_and_legacy_post_do_not_gain_source_keys(quality_sessions, monkeypatch):
-    ru = "HOOK\n" + "Полезный текст " * 30 + "\nINSIGHT\nVALUE\nCONCLUSION"
+    ru = "Проверенная новость\n\n" + "Компания выпустила модель и сообщила условия её использования. " * 12
     monkeypatch.setattr(AIWriterService, "generate_ru", lambda *_: ru)
-    monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "EN")
+    monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "Verified news\n\n" + "The company released a model and described its available features. " * 12)
     first = GeneratorService().generate("same topic")
     second = GeneratorService().generate("same topic")
     source = GeneratorService().generate("same topic", source_url="https://openai.com/story")
@@ -149,7 +149,7 @@ def test_manual_generation_and_legacy_post_do_not_gain_source_keys(quality_sessi
 
 def test_rejected_source_is_not_recorded(quality_sessions, monkeypatch):
     monkeypatch.setattr(AIWriterService, "generate_ru", lambda *_: "bad")
-    monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "EN")
+    monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "Verified news\n\n" + "The company released a model and described its available features. " * 12)
     result = ContentPipeline().generate_full_content("Rejected", source_url="https://openai.com/rejected")
     assert result["status"] == "rejected"
     assert isinstance(result["quality_issues"], list)
@@ -280,8 +280,8 @@ class Factory:
     def create(self, db, content): return Publisher()
 def agent(db):
     return SimpleNamespace(run_for_posts=PublisherService(db, factory=Factory()).publish_pending_for_posts)
-ru = "HOOK\n" + "Полезный текст " * 30 + "\nINSIGHT\nVALUE\nCONCLUSION"
-with patch("services.ai_engine.services.writer_service.AIWriterService.generate_ru", return_value=ru) as writer, patch("services.ai_engine.services.translator_service.AITranslatorService.ru_to_en", return_value="EN"):
+ru = "Проверенная новость\n\n" + "Компания выпустила модель и сообщила условия её использования. " * 12
+with patch("services.ai_engine.services.writer_service.AIWriterService.generate_ru", return_value=ru) as writer, patch("services.ai_engine.services.translator_service.AITranslatorService.ru_to_en", return_value="Verified news\n\n" + "The company released a model and described its available features. " * 12):
     result = run_mvp_cycle(news_service=NewsService(collectors=[Collector()], scorer=NewsScorer(now)), content_service=IntelligenceContentGenerationService(), publisher_agent_factory=agent)
     with SessionLocal() as db:
         print(json.dumps({"writer": writer.call_count, "sent": len(calls), "posts": db.query(Post).count(), "jobs": db.query(ChannelContent).count(), "post_ids": result["post_ids"]}))
