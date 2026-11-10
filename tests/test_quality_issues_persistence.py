@@ -162,11 +162,11 @@ def test_invalid_issues_fail_before_database_access_without_partial_records(
 
 
 def test_real_approved_quality_agent_persists_complete_post(quality_sessions, monkeypatch):
-    ru = "HOOK\n" + "Проверенный текст " * 20 + "\nINSIGHT\nVALUE\nCONCLUSION"
+    ru = "Проверенная новость\n\n" + "Компания выпустила модель и сообщила условия её использования. " * 12
     quality = QualityAgent().check(ru)
     assert quality == {"score": 100, "approved": True, "issues": []}
     monkeypatch.setattr(AIWriterService, "generate_ru", lambda *_: ru)
-    monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "EN content")
+    monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "Verified news\n\n" + "The company released a model and described its available features. " * 12)
 
     saved = asyncio.run(create_post(PostCreate(topic="Real QualityAgent")))
 
@@ -181,7 +181,8 @@ def test_real_rejected_quality_agent_keeps_list_and_creates_no_records(
 ):
     monkeypatch.setattr(AIWriterService, "generate_ru", lambda *_: "bad")
     monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "EN")
-    expected = QualityAgent().check("bad")["issues"]
+    expected = [f"{language}: {issue}" for language, text in (("RU", "bad"), ("EN", "EN"))
+                for issue in QualityAgent().check(text)["issues"]]
 
     result = ContentPipeline().generate_full_content("Rejected quality")
 

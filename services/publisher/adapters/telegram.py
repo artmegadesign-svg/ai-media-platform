@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import json
+from html import escape
 from uuid import UUID, uuid4, uuid5
 
 import httpx
 
+from services.ai_engine.agents.quality_agent import QualityAgent
 from services.publisher.interface import PublisherInterface
 from services.publisher.media import PublicationMedia
 from services.publisher.models import PublicationReference, PublishResult
@@ -13,7 +15,6 @@ from services.publisher.models import PublicationReference, PublishResult
 IDEMPOTENCY_NAMESPACE = UUID("7e69fe26-cf27-4c17-88aa-28fb13980254")
 TELEGRAM_TEXT_LIMIT = 4096
 TELEGRAM_IMAGE_CAPTION_LIMIT = 1024
-TRUNCATION_SUFFIX = "\n\n…"
 
 
 class TelegramPublisher(PublisherInterface):
@@ -44,18 +45,20 @@ class TelegramPublisher(PublisherInterface):
         return str(uuid5(IDEMPOTENCY_NAMESPACE, f"channel-content:{content.id}"))
 
     @staticmethod
-    def truncate_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
-        """Fit publication text within the applicable Telegram text limit."""
-        if len(text) <= limit:
-            return text
-
-        content_limit = limit - len(TRUNCATION_SUFFIX)
-        candidate = text[:content_limit]
-        newline_index = candidate.rfind("\n")
-        if newline_index != -1:
-            candidate = candidate[:newline_index]
-
-        return candidate + TRUNCATION_SUFFIX
+    def render_html(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
+        """Render canonical plain text; reject oversize payloads instead of losing facts."""
+        if QualityAgent.surface_issues(text):
+            raise ValueError("Publication contains raw or unsuitable content")
+        headline, _, body = text.strip().partition("\n")
+        body = body.strip()
+        plain = headline + ("\n\n" + body if body else "")
+        rendered = "<b>" + escape(headline, quote=False) + "</b>"
+        if body:
+            rendered += "\n\n" + escape(body, quote=False)
+        # Gateway validates serialized HTML length; Telegram also uses UTF-16 entities.
+        if len(rendered) > limit or len(plain.encode("utf-16-le")) // 2 > limit:
+            raise ValueError(f"Complete publication exceeds the {limit}-character Telegram budget")
+        return rendered
 
     def publish(self, content: PublicationReference) -> PublishResult:
         url = f"{self.gateway_url}/api/v1/telegram/publications"
@@ -69,9 +72,15 @@ class TelegramPublisher(PublisherInterface):
             if self.media is not None
             else TELEGRAM_TEXT_LIMIT
         )
+        try:
+            formatted_text = self.render_html(self.text, text_limit)
+        except ValueError as exc:
+            return PublishResult(
+                success=False, outcome="failed", error_code="publication_not_ready", error=str(exc),
+            )
         payload = {
             "gateway_channel_id": self.gateway_channel_id,
-            "text": self.truncate_text(self.text, text_limit),
+            "text": formatted_text,
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
         }

@@ -1,3 +1,5 @@
+import re
+
 from services.ai_engine.services.writer_service import AIWriterService
 from services.ai_engine.services.translator_service import AITranslatorService
 from services.ai_engine.services.post_service import PostService
@@ -29,27 +31,20 @@ Topic: {strategy_result.get('topic')}
 
 Audience: {strategy_result.get('audience')}
 
-Angle: {strategy_result.get('angle')}
-
-Content type: {strategy_result.get('content_type')}
-
-Priority: {strategy_result.get('priority')}
-
 Keywords: {', '.join(strategy_result.get('keywords', []))}
 """
 
-        ru = self.writer.generate_ru(enhanced_topic)
-
-        en = self.translator.ru_to_en(ru)
-
-        quality_result = self.quality.check(ru)
-
-        if not quality_result:
-            quality_result = {
-                "score": 0,
-                "approved": False,
-                "issues": ["Quality check returned empty result"]
-            }
+        ru = self.prepare_text(self.writer.generate_ru(enhanced_topic))
+        en = self.prepare_text(self.translator.ru_to_en(ru))
+        checks = [self.quality.check(ru), self.quality.check(en)]
+        checks = [check or {"score": 0, "approved": False,
+                            "issues": ["Quality check returned empty result"]} for check in checks]
+        quality_result = {
+            "score": min(check.get("score", 0) for check in checks),
+            "approved": all(check.get("approved", False) for check in checks),
+            "issues": [f"{language}: {issue}" for language, check in zip(("RU", "EN"), checks)
+                       for issue in (check.get("issues") or [])],
+        }
 
         if not quality_result.get("approved", False):
             return {
@@ -85,3 +80,28 @@ Keywords: {', '.join(strategy_result.get('keywords', []))}
             "quality_approved": post["quality_approved"],
             "quality_issues": post["quality_issues"]
         }
+
+    @staticmethod
+    def prepare_text(text: str) -> str:
+        """Normalize unambiguous presentation wrappers, never cut sentences/facts.
+
+        Assistant prose and unsupported markup are left for Quality to reject.
+        Only known whole labels/prefixes and balanced bold wrappers are removed.
+        """
+        if not isinstance(text, str):
+            return ""
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n")
+        if (len(lines) >= 2 and re.fullmatch(r"```(?:text|plaintext|markdown)?", lines[0].strip(), re.I)
+                and lines[-1].strip() == "```"):
+            lines = lines[1:-1]
+        prepared = []
+        section = QualityAgent.SERVICE_SECTION_PATTERN
+        for line in lines:
+            line = line.strip()
+            line = re.sub(r"^#{1,6}\s+", "", line)
+            line = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", line)
+            if re.fullmatch(section + r"\s*:?\s*", line, re.I):
+                continue
+            line = re.sub(r"^" + section + r"\s*:\s*", "", line, flags=re.I)
+            prepared.append(line)
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(prepared)).strip()
