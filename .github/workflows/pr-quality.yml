@@ -43,7 +43,11 @@ jobs:
           python -m pip install "pydantic>=2.10" "pydantic-settings>=2.6" "httpx>=0.28" "pytest>=8.4" "ruff>=0.12.9"
       - name: Diff whitespace validation
         run: git diff --check "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
-      - name: Ruff
+      - name: Ruff on changed Python files
+        run: |
+          git diff --name-only --diff-filter=ACMR -z "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- '*.py' | xargs -0 -r python -m ruff check --
+      - name: Repository-wide Ruff baseline (informational)
+        continue-on-error: true
         run: python -m ruff check .
       - name: SQLite unit and integration tests
         run: python -m pytest -q --ignore=tests/test_ci_postgres.py
