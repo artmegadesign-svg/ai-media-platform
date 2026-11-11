@@ -267,3 +267,96 @@ def test_confirmed_absence_preserves_single_existing_image_fallback(monkeypatch,
     assert outcome["media_generation_status"] == "pending"
     assert asset.metadata_["image_discovery_status"] == "complete"
     assert asset.metadata_["generation_deferred"] is False
+
+
+@pytest.mark.parametrize("language", ["ru", "en"])
+def test_normalized_official_image_credit_reaches_existing_publisher(
+    monkeypatch, db, language
+):
+    import json
+    import httpx
+    from services.publisher import factory as publisher_factory_module
+    from models.channel import Channel
+    from services.news.collectors.google_ai import GoogleAINewsCollector
+    from services.news.models import ImageUsage, OfficialImagePolicy
+    from services.news.normalizer import NewsNormalizer
+    from services.publisher.factory import PublisherFactory
+    from services.publisher.models import PublicationReference
+
+    page = "https://blog.google/technology/ai/release/?utm_source=rss"
+    image = "https://blog.google/photo.jpg?utm_signature=signed&token=42"
+    credit = "Source: Google."
+    xml = f"<rss><channel><item><title>Media bridge</title><link>{page}</link></item></channel></rss>"
+
+    def fetch(url):
+        if url == GoogleAINewsCollector.feed_url:
+            return xml
+        return f'<meta property="og:image" content="{image}">'
+
+    policy = OfficialImagePolicy(
+        permissions={
+            image: ImageUsage(
+                usage_allowed=True,
+                attribution_required=True,
+                attribution=credit,
+                license_type="reviewed_editorial_permission",
+                terms_url="https://blog.google/image-library/",
+                evidence="Explicit permission for this test image; not a domain-wide grant",
+            )
+        }
+    )
+    collected = GoogleAINewsCollector(fetch, image_policy=policy).collect()
+    news = NewsNormalizer().normalize(collected)[0]
+    _content(monkeypatch)
+    result = _result()
+    result.news = news
+    provider = RecordingProvider()
+    outcome = IntelligenceContentGenerationService(image_provider=provider).generate(
+        [result]
+    )[0]
+    asset = db.query(MediaAsset).one()
+    assert provider.calls == []
+    assert outcome["media_strategy"] == "use_official_image"
+    assert asset.url == image
+    assert asset.metadata_["provenance"]["page_url"] == page
+    assert asset.metadata_["usage"]["attribution"] == credit
+
+    channel = Channel(
+        name=f"Credit {language}",
+        platform="telegram",
+        language_code=language,
+        gateway_channel_id=f"credit-{language}",
+    )
+    db.add(channel)
+    db.flush()
+    content = ChannelContent(
+        channel_id=channel.id, post_id=asset.post_id, status="pending"
+    )
+    db.add(content)
+    db.commit()
+    monkeypatch.setattr(
+        publisher_factory_module.settings, "ai_gateway_internal_token", "test-token"
+    )
+    publisher = PublisherFactory().create(db, content)
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "status": "published",
+                "provider": "telegram",
+                "channel_id": channel.gateway_channel_id,
+                "external_message_id": 123,
+            },
+        )
+
+    publisher.client = httpx.Client(transport=httpx.MockTransport(handler))
+    published = publisher.publish(
+        PublicationReference(content.id, asset.post_id, channel.id)
+    )
+    assert published.success
+    payload = json.loads(requests[0].content)
+    assert payload["text"].endswith("\n\n" + credit)
+    assert payload["media"] == {"type": "image", "url": image}

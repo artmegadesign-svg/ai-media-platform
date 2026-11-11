@@ -45,7 +45,9 @@ class TelegramPublisher(PublisherInterface):
         return str(uuid5(IDEMPOTENCY_NAMESPACE, f"channel-content:{content.id}"))
 
     @staticmethod
-    def render_html(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
+    def render_html(
+        text: str, limit: int = TELEGRAM_TEXT_LIMIT, *, credit: str | None = None
+    ) -> str:
         """Render canonical plain text; reject oversize payloads instead of losing facts."""
         if QualityAgent.surface_issues(text):
             raise ValueError("Publication contains raw or unsuitable content")
@@ -55,9 +57,17 @@ class TelegramPublisher(PublisherInterface):
         rendered = "<b>" + escape(headline, quote=False) + "</b>"
         if body:
             rendered += "\n\n" + escape(body, quote=False)
+        if credit is not None:
+            if not isinstance(credit, str) or not credit.strip():
+                raise ValueError("Image credit must be non-empty text")
+            # Credit is plain text, not markup or generated news. Preserve it in full.
+            plain += "\n\n" + credit
+            rendered += "\n\n" + escape(credit, quote=False)
         # Gateway validates serialized HTML length; Telegram also uses UTF-16 entities.
         if len(rendered) > limit or len(plain.encode("utf-16-le")) // 2 > limit:
-            raise ValueError(f"Complete publication exceeds the {limit}-character Telegram budget")
+            raise ValueError(
+                f"Complete publication exceeds the {limit}-character Telegram budget"
+            )
         return rendered
 
     def publish(self, content: PublicationReference) -> PublishResult:
@@ -73,10 +83,15 @@ class TelegramPublisher(PublisherInterface):
             else TELEGRAM_TEXT_LIMIT
         )
         try:
-            formatted_text = self.render_html(self.text, text_limit)
+            formatted_text = self.render_html(
+                self.text, text_limit, credit=self.media.credit if self.media else None
+            )
         except ValueError as exc:
             return PublishResult(
-                success=False, outcome="failed", error_code="publication_not_ready", error=str(exc),
+                success=False,
+                outcome="failed",
+                error_code="publication_not_ready",
+                error=str(exc),
             )
         payload = {
             "gateway_channel_id": self.gateway_channel_id,

@@ -52,10 +52,14 @@ Set the environment variable to a JSON object, keyed by collector source (`OpenA
 or `Google`). Include only verified CDN hosts and permission records reviewed for
 the intended use. Query strings on image URLs are preserved, including signatures;
 grants do not automatically cover different URLs. Required visible credits are
-conservatively rejected in this stage because Publisher caption attribution has
-not been implemented. Credit information is still retained for audit. A license
-name without evidence and an explicit allowed flag is insufficient. The legacy
-single-image resolver input also now requires the `usage` permission object.
+supported only with a non-empty `attribution` string and explicit reuse permission.
+The existing Publisher appends that exact plain-text credit to the Telegram
+caption, HTML-escapes it, and checks both serialized HTML and UTF-16 lengths
+against the 1024-character budget. Neither the news nor mandatory attribution is
+truncated: an oversized caption is rejected locally before any Gateway request.
+A license name or credit alone without evidence and an explicit allowed flag is
+insufficient. The legacy single-image resolver input also requires the `usage`
+permission object.
 
 ### Existing pipeline and persistence
 
@@ -70,6 +74,11 @@ The first permitted official image wins; no AI provider is invoked. The existing
 `MediaAsset` stores the image URL, source=`official`, origin, license and complete
 source/usage evidence in its JSON metadata, with `planning_status=reference_ready`.
 It is usable by the existing image Publisher without changing its transport.
+The Publisher rechecks the stored usage permission before selecting official
+media and carries any credit alongside the selected image. Page identity is
+compared using the existing news canonicalization (including trailing slashes and
+UTM parameters); original page/file URLs and provenance remain unchanged.
+No blanket permissions for Google or OpenAI are introduced.
 
 A completed lookup with no suitable permitted image uses the existing single
 `generate_image` fallback plan. This change does not call any paid service during

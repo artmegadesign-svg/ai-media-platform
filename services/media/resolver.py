@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from services.news.urls import approved_url
 from services.news.models import OfficialImageCandidate
+from services.news.normalizer import source_identity
 
 
 class MediaStrategy(StrEnum):
@@ -83,7 +84,7 @@ class MediaResolver:
             return self._generated(invalid_reason)
 
         strategy, media_type = candidate
-        if media_type is MediaType.IMAGE and not self._usage_allowed(
+        if media_type is MediaType.IMAGE and not self.image_usage_allowed(
             metadata.get("usage")
         ):
             return self._generated("Image reuse permission is not confirmed")
@@ -115,10 +116,10 @@ class MediaResolver:
             except (ValidationError, TypeError):
                 continue
             if (
-                image.page_url != metadata.get("url")
+                not self._same_page(image.page_url, metadata.get("url"))
                 or image.source != metadata.get("source")
                 or not approved_url(image.url, image.official_hosts)
-                or not self._usage_allowed(
+                or not self.image_usage_allowed(
                     image.usage.model_dump() if image.usage else None
                 )
             ):
@@ -154,9 +155,16 @@ class MediaResolver:
         )
 
     @staticmethod
-    def _usage_allowed(usage: Any) -> bool:
-        # This stage does not change Publisher captions: images requiring a
-        # visible credit must wait until attribution delivery is supported.
+    def _same_page(original_url: str, news_url: Any) -> bool:
+        # Normalize page identity only. Never rewrite signed image URLs or evidence.
+        try:
+            return source_identity(original_url)[0] == source_identity(news_url)[0]
+        except ValueError:
+            return False
+
+    @staticmethod
+    def image_usage_allowed(usage: Any) -> bool:
+        """Require explicit permission and a complete credit when mandatory."""
         if not isinstance(usage, Mapping):
             return False
         terms = usage.get("terms_url")
@@ -166,7 +174,14 @@ class MediaResolver:
             return False
         return (
             usage.get("usage_allowed") is True
-            and usage.get("attribution_required") is False
+            and (
+                usage.get("attribution_required") is False
+                or (
+                    usage.get("attribution_required") is True
+                    and isinstance(usage.get("attribution"), str)
+                    and bool(usage["attribution"].strip())
+                )
+            )
             and all(
                 isinstance(usage.get(key), str) and usage[key].strip()
                 for key in ("license_type", "terms_url", "evidence")

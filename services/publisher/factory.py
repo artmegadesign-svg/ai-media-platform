@@ -39,6 +39,7 @@ class PublisherFactory:
         media = select_publication_media(post.media_assets, channel.language_code)
         TelegramPublisher.render_html(
             text, TELEGRAM_IMAGE_CAPTION_LIMIT if media is not None else TELEGRAM_TEXT_LIMIT,
+            credit=media.credit if media is not None else None,
         )
         return self.telegram_publisher_class(
             gateway_url=settings.ai_gateway_url,

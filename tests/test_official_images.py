@@ -1,6 +1,7 @@
 """Official source extraction, permission policy, and existing media persistence."""
 
 import json
+from html import escape
 from urllib.error import URLError
 
 import httpx
@@ -33,7 +34,7 @@ def permission(**overrides):
 
 def feed(media="", *, url=PAGE):
     return f"""<rss xmlns:media="http://search.yahoo.com/mrss/"><channel><item>
-      <title>Introducing a model</title><link>{url}</link>{media}
+      <title>Introducing a model</title><link>{escape(url)}</link>{media}
       </item></channel></rss>"""
 
 
@@ -123,7 +124,7 @@ def test_missing_image_is_complete_fallback():
     [
         None,
         permission(usage_allowed=False),
-        permission(attribution_required=True, attribution="Owner"),
+        permission(attribution_required=True, attribution=" "),
     ],
 )
 def test_official_host_does_not_imply_permission(usage):
@@ -307,3 +308,62 @@ def test_settings_wires_reviewed_permissions_into_default_collectors(monkeypatch
         else f'<meta property="og:image" content="{IMAGE}">'
     )
     assert decision(collector.collect()[0]).source_url == IMAGE
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        PAGE + "/",
+        PAGE + "?utm_source=rss",
+        PAGE + "/?utm_source=rss&utm_medium=feed",
+    ],
+)
+def test_canonical_page_identity_preserves_original_image_and_evidence(page):
+    from services.news.normalizer import NewsNormalizer
+
+    image = "https://openai.com/photo.jpg?utm_signature=signed&token=42"
+    item, _ = collect(
+        url=page,
+        html=f'<meta property="og:image" content="{image}">',
+        policy=policy(
+            **{
+                image: permission(
+                    attribution_required=True, attribution="Source: OpenAI."
+                )
+            }
+        ),
+    )
+    original = item.official_images[0].model_dump(mode="json")
+    normalized = NewsNormalizer().normalize([item])[0]
+    result = decision(normalized)
+    assert normalized.url == PAGE
+    assert result.strategy is MediaStrategy.USE_OFFICIAL_IMAGE
+    assert result.source_url == image
+    assert result.metadata["provenance"]["page_url"] == page
+    assert result.metadata["official_images"] == [original]
+    assert result.metadata["usage"]["attribution"] == "Source: OpenAI."
+
+
+@pytest.mark.parametrize(
+    "different_page",
+    [PAGE + "-other", PAGE + "?id=other", "https://other.example/release"],
+)
+def test_page_identity_does_not_accept_unrelated_pages(different_page):
+    item, _ = collect(
+        html=f'<meta property="og:image" content="{IMAGE}">',
+        policy=policy(**{IMAGE: permission()}),
+    )
+    data = metadata(item)
+    data["url"] = different_page
+    assert MediaResolver().resolve(data).strategy is MediaStrategy.GENERATE_IMAGE
+
+
+@pytest.mark.parametrize("credit", [None, "", "   "])
+def test_mandatory_attribution_without_credit_is_not_permission(credit):
+    item, _ = collect(
+        html=f'<meta property="og:image" content="{IMAGE}">',
+        policy=policy(
+            **{IMAGE: permission(attribution_required=True, attribution=credit)}
+        ),
+    )
+    assert decision(item).strategy is MediaStrategy.GENERATE_IMAGE
