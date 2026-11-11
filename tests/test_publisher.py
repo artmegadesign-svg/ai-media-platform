@@ -375,7 +375,6 @@ def test_telegram_caption_preserves_and_escapes_full_image_credit(text):
     "text,credit",
     [
         ("N" * 1000, "Source: Google. " + "x" * 100),
-        ("N" * 900, "&" * 30),  # Serialized HTML exceeds 1024 after escaping.
         ("N" * 900, "🙂" * 70),  # UTF-16 exceeds 1024 while Python/HTML length fits.
     ],
 )

@@ -6,9 +6,7 @@ from models.channel import Channel
 from models.channel_content import ChannelContent
 from models.post import Post
 from services.publisher.adapters.mock import MockPublisher
-from services.publisher.adapters.telegram import (
-    TelegramPublisher, TELEGRAM_TEXT_LIMIT, TELEGRAM_IMAGE_CAPTION_LIMIT,
-)
+from services.publisher.adapters.telegram import TelegramPublisher
 from services.publisher.interface import PublisherInterface
 from services.publisher.media import select_publication_media
 
@@ -37,10 +35,7 @@ class PublisherFactory:
             raise HTTPException(status_code=404, detail="Post not found")
         text = post.ru_content if channel.language_code.lower() == "ru" else post.en_content
         media = select_publication_media(post.media_assets, channel.language_code)
-        TelegramPublisher.render_html(
-            text, TELEGRAM_IMAGE_CAPTION_LIMIT if media is not None else TELEGRAM_TEXT_LIMIT,
-            credit=media.credit if media is not None else None,
-        )
+        TelegramPublisher.prepare_publication(text, media)
         return self.telegram_publisher_class(
             gateway_url=settings.ai_gateway_url,
             internal_token=settings.ai_gateway_internal_token,

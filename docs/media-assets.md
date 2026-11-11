@@ -54,9 +54,15 @@ the intended use. Query strings on image URLs are preserved, including signature
 grants do not automatically cover different URLs. Required visible credits are
 supported only with a non-empty `attribution` string and explicit reuse permission.
 The existing Publisher appends that exact plain-text credit to the Telegram
-caption, HTML-escapes it, and checks both serialized HTML and UTF-16 lengths
-against the 1024-character budget. Neither the news nor mandatory attribution is
-truncated: an oversized caption is rejected locally before any Gateway request.
+caption and checks both the Gateway wire-string length and Telegram UTF-16 length
+against the 1024-character budget. Factory and Adapter share
+`TelegramPublisher.prepare_publication`: fitting HTML stays unchanged; otherwise
+it tries the complete plain text with `parse_mode=null`, then removes only
+redundant ASCII spaces/tabs and extra blank lines from the news. It retains every
+sentence, non-empty line and paragraph in order. Credit is never normalized or
+truncated. If no complete variant fits, preparation fails before any Gateway
+request. Post and ContentVariant are never rewritten. Text-only publications keep
+the existing strict HTML behavior. No additional AI calls are made.
 A license name or credit alone without evidence and an explicit allowed flag is
 insufficient. The legacy single-image resolver input also requires the `usage`
 permission object.
