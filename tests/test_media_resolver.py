@@ -10,6 +10,13 @@ def _official(**overrides):
         "official_domain": "organization.example",
         "origin": "organization_press_office",
         "license_type": "official_publication",
+        "usage": {
+            "usage_allowed": True,
+            "attribution_required": False,
+            "license_type": "press_permission",
+            "terms_url": "https://organization.example/terms",
+            "evidence": "Reviewed image-specific permission",
+        },
         "provenance": {"release_id": "release-42", "verified_by": "editor"},
     }
     metadata.update(overrides)
@@ -17,9 +24,7 @@ def _official(**overrides):
 
 
 def test_normal_news_uses_generated_image():
-    decision = MediaResolver().resolve(
-        {"news_type": "news", "material_type": "image"}
-    )
+    decision = MediaResolver().resolve({"news_type": "news", "material_type": "image"})
     assert decision.strategy is MediaStrategy.GENERATE_IMAGE
 
 
@@ -35,9 +40,7 @@ def test_third_party_article_image_is_rejected_even_with_a_url():
 
 
 def test_unverified_image_falls_back():
-    decision = MediaResolver().resolve(
-        _official(verified_official_source=False)
-    )
+    decision = MediaResolver().resolve(_official(verified_official_source=False))
     assert decision.strategy is MediaStrategy.GENERATE_IMAGE
 
 

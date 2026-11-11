@@ -33,7 +33,9 @@ class IntelligenceContentGenerationService:
         *,
         image_provider: ImageGenerationProvider | None = None,
         session_factory: Callable[[], Any] = SessionLocal,
-        planning_service_factory: Callable[[Any], MediaPlanningService] = MediaPlanningService,
+        planning_service_factory: Callable[
+            [Any], MediaPlanningService
+        ] = MediaPlanningService,
         generation_service_factory: Callable[
             [Any, ImageGenerationProvider], MediaGenerationService
         ] = MediaGenerationService,
@@ -61,7 +63,9 @@ class IntelligenceContentGenerationService:
                 "source_id": str(result.news.id),
                 "source_url": result.news.url,
                 "content_generation_status": content.get("status"),
-                "post_id": content.get("id") if content.get("post_created") is True else None,
+                "post_id": content.get("id")
+                if content.get("post_created") is True
+                else None,
                 "media_asset_id": None,
                 "media_strategy": None,
                 "media_generation_status": "not_started",
@@ -89,7 +93,10 @@ class IntelligenceContentGenerationService:
                     media_url=None if generation_required else asset.url,
                 )
 
-                if generation_required:
+                if (
+                    generation_required
+                    and metadata.get("generation_status") != "deferred"
+                ):
                     if self.image_provider is None:
                         orchestration["media_generation_status"] = "pending"
                     else:
@@ -112,14 +119,15 @@ class IntelligenceContentGenerationService:
 
     @staticmethod
     def _source_metadata(result: IntelligenceResult) -> dict[str, Any]:
-        """Map only metadata actually present in the intelligence contract.
-
-        These fields intentionally do not claim official status or provenance.
-        Consequently ordinary news safely resolves to generated media.
-        """
+        """Pass collector evidence to the existing pure media policy."""
         news = result.news
         published_at = getattr(news, "published_at", None)
         return {
+            "official_images": [
+                image.model_dump(mode="json") for image in news.official_images
+            ],
+            "image_discovery_status": news.image_discovery_status,
+            "image_discovery_error": news.image_discovery_error,
             "title": news.title,
             "url": news.url,
             "image_url": getattr(news, "image_url", None),

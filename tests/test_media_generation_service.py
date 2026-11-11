@@ -82,6 +82,13 @@ def test_rejects_official_reference():
                 "official_domain": "official.example",
                 "origin": "press_office",
                 "license_type": "official_publication",
+                "usage": {
+                    "usage_allowed": True,
+                    "attribution_required": False,
+                    "license_type": "press_permission",
+                    "terms_url": "https://official.example/terms",
+                    "evidence": "Reviewed permission for image",
+                },
                 "provenance": {"release": "1"},
             },
         )
