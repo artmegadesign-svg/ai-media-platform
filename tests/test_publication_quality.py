@@ -255,7 +255,7 @@ def test_serialized_html_boundary_and_overflow(limit):
 
 
 def test_overlong_caption_fails_locally_without_cutting_or_sending():
-    text = news() + '\n\n' + '&' * 100
+    text = news() + '\n\n' + '&' * 1100
     outbound = []
     with httpx.Client(transport=httpx.MockTransport(lambda r: outbound.append(r))) as client:
         publisher = TelegramPublisher('https://gateway.example', 'test-only', 'audit', text,

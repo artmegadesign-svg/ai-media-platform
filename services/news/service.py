@@ -21,15 +21,25 @@ class NewsService:
         scorer: NewsScorer | None = None,
         limit: int = 10,
     ) -> None:
+        from core.settings import settings
+
         self.collectors = collectors or [
-            OpenAINewsCollector(), AnthropicNewsCollector(), GoogleAINewsCollector()
+            OpenAINewsCollector(
+                image_policy=settings.official_image_policies.get("OpenAI")
+            ),
+            AnthropicNewsCollector(),
+            GoogleAINewsCollector(
+                image_policy=settings.official_image_policies.get("Google")
+            ),
         ]
         self.normalizer = normalizer or NewsNormalizer()
         self.scorer = scorer or NewsScorer()
         self.limit = limit
 
     def collect_news(self) -> list[NewsItem]:
-        collected = [item for collector in self.collectors for item in collector.collect()]
+        collected = [
+            item for collector in self.collectors for item in collector.collect()
+        ]
         return self.process(collected)
 
     def process(self, items: Iterable[NewsItem]) -> list[NewsItem]:

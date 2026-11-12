@@ -25,10 +25,14 @@ class MediaPlanningService:
     def _to_asset(post_id: int, decision: MediaDecision) -> MediaAsset:
         metadata = {
             **decision.metadata,
-            "planning_status": "generation_required"
+            "planning_status": "source_retry_required"
+            if decision.metadata.get("generation_deferred")
+            else "generation_required"
             if decision.strategy is MediaStrategy.GENERATE_IMAGE
             else "reference_ready",
-            "generation_status": "pending"
+            "generation_status": "deferred"
+            if decision.metadata.get("generation_deferred")
+            else "pending"
             if decision.strategy is MediaStrategy.GENERATE_IMAGE
             else None,
             "strategy": decision.strategy.value,

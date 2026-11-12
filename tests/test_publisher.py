@@ -346,3 +346,58 @@ def test_publish_endpoint_keeps_mock_for_non_telegram(isolated_db):
     isolated_db.rollback()
     response = publish_route.publish(content_id=content_id, db=isolated_db)
     assert response["platform_post_id"] == "mock_42"
+
+
+@pytest.mark.parametrize("text", ["Новость\nРусский текст", "News\nEnglish text"])
+def test_telegram_caption_preserves_and_escapes_full_image_credit(text):
+    credit = "Source: Google & <Artist>. https://official.example/image?a=1&b=2"
+    media = PublicationMedia(
+        asset_id=73, type="image", url="https://cdn.example/image.jpg", credit=credit
+    )
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=gateway_success())
+
+    publisher, content = make_gateway_publisher(handler, text=text, media=media)
+    result = publisher.publish(content)
+    payload = json.loads(requests[0].content)
+    assert result.success
+    assert payload["text"].endswith(
+        "Source: Google &amp; &lt;Artist&gt;. https://official.example/image?a=1&amp;b=2"
+    )
+    assert payload["media"] == {"type": "image", "url": media.url}
+    assert "credit" not in payload  # Existing Gateway contract, no new fields.
+
+
+@pytest.mark.parametrize(
+    "text,credit",
+    [
+        ("N" * 1000, "Source: Google. " + "x" * 100),
+        ("N" * 900, "🙂" * 70),  # UTF-16 exceeds 1024 while Python/HTML length fits.
+    ],
+)
+def test_overlong_credit_rejects_publication_without_any_request(text, credit):
+    requests = []
+    media = PublicationMedia(
+        asset_id=73, type="image", url="https://cdn.example/image.jpg", credit=credit
+    )
+    publisher, content = make_gateway_publisher(
+        lambda request: requests.append(request), text=text, media=media
+    )
+    result = publisher.publish(content)
+    assert not result.success
+    assert result.error_code == "publication_not_ready"
+    assert requests == []
+    assert publisher.media.credit == credit
+
+
+def test_caption_at_exact_budget_keeps_complete_credit():
+    credit = "Source: Google."
+    text = "x" * (1024 - len("<b></b>") - 2 - len(credit))
+    rendered = TelegramPublisher.render_html(text, 1024, credit=credit)
+    assert len(rendered) == 1024
+    assert rendered.endswith("\n\n" + credit)
+    with pytest.raises(ValueError):
+        TelegramPublisher.render_html(text + "x", 1024, credit=credit)

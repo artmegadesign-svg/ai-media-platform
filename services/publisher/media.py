@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from models.media_asset import MediaAsset
+from services.media.resolver import MediaResolver
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,6 +13,7 @@ class PublicationMedia:
     asset_id: int
     type: str
     url: str
+    credit: str | None = None
 
 
 def select_publication_media(
@@ -40,16 +42,23 @@ def select_publication_media(
         elif asset.source == "official":
             if metadata.get("planning_status") != "reference_ready":
                 continue
+            if not MediaResolver.image_usage_allowed(metadata.get("usage")):
+                continue
         else:
             continue
 
         language_priority = 0 if asset_language == language else 1
-        eligible.append(
-            (language_priority, asset.created_at, asset.id, asset, url)
-        )
+        eligible.append((language_priority, asset.created_at, asset.id, asset, url))
 
     if not eligible:
         return None
 
     _, _, _, selected, url = min(eligible, key=lambda item: item[:3])
-    return PublicationMedia(asset_id=selected.id, type=selected.type, url=url)
+    usage = (selected.metadata_ or {}).get("usage") or {}
+    credit = usage.get("attribution") if selected.source == "official" else None
+    return PublicationMedia(
+        asset_id=selected.id,
+        type=selected.type,
+        url=url,
+        credit=credit if isinstance(credit, str) and credit.strip() else None,
+    )

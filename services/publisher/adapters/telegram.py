@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import json
+import re
 from html import escape
 from uuid import UUID, uuid4, uuid5
 
@@ -45,8 +46,7 @@ class TelegramPublisher(PublisherInterface):
         return str(uuid5(IDEMPOTENCY_NAMESPACE, f"channel-content:{content.id}"))
 
     @staticmethod
-    def render_html(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> str:
-        """Render canonical plain text; reject oversize payloads instead of losing facts."""
+    def _render_parts(text: str, credit: str | None) -> tuple[str, str]:
         if QualityAgent.surface_issues(text):
             raise ValueError("Publication contains raw or unsuitable content")
         headline, _, body = text.strip().partition("\n")
@@ -55,10 +55,54 @@ class TelegramPublisher(PublisherInterface):
         rendered = "<b>" + escape(headline, quote=False) + "</b>"
         if body:
             rendered += "\n\n" + escape(body, quote=False)
-        # Gateway validates serialized HTML length; Telegram also uses UTF-16 entities.
-        if len(rendered) > limit or len(plain.encode("utf-16-le")) // 2 > limit:
+        if credit is not None:
+            if not isinstance(credit, str) or not credit.strip():
+                raise ValueError("Image credit must be non-empty text")
+            # Credit is plain text. Keep it verbatim, including its whitespace.
+            plain += "\n\n" + credit
+            rendered += "\n\n" + escape(credit, quote=False)
+        return plain, rendered
+
+    @staticmethod
+    def _fits(wire_text: str, visible_text: str, limit: int) -> bool:
+        # Gateway bounds the wire string; Telegram bounds UTF-16 visible text.
+        return len(wire_text) <= limit and len(visible_text.encode("utf-16-le")) // 2 <= limit
+
+    @classmethod
+    def render_html(
+        cls, text: str, limit: int = TELEGRAM_TEXT_LIMIT, *, credit: str | None = None
+    ) -> str:
+        """Strict HTML rendering, retained for text-only publications and callers."""
+        plain, rendered = cls._render_parts(text, credit)
+        if not cls._fits(rendered, plain, limit):
             raise ValueError(f"Complete publication exceeds the {limit}-character Telegram budget")
         return rendered
+
+    @classmethod
+    def prepare_publication(
+        cls, text: str, media: PublicationMedia | None = None
+    ) -> tuple[str, str | None]:
+        """Prepare a caption without rewriting facts or mutating stored content."""
+        if media is None:
+            return cls.render_html(text, TELEGRAM_TEXT_LIMIT), "HTML"
+        plain, rendered = cls._render_parts(text, media.credit)
+        if cls._fits(rendered, plain, TELEGRAM_IMAGE_CAPTION_LIMIT):
+            return rendered, "HTML"
+        if cls._fits(plain, plain, TELEGRAM_IMAGE_CAPTION_LIMIT):
+            return plain, None
+        # Only redundant ASCII spacing and extra blank lines may be removed.
+        # Keep every non-empty line, sentence and paragraph in its original order.
+        compact = "\n".join(
+            re.sub(r"[ \t]+", " ", line).strip(" \t")
+            for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        )
+        compact = re.sub(r"\n{3,}", "\n\n", compact).strip()
+        plain, _ = cls._render_parts(compact, media.credit)
+        if cls._fits(plain, plain, TELEGRAM_IMAGE_CAPTION_LIMIT):
+            return plain, None
+        raise ValueError(
+            f"Complete publication exceeds the {TELEGRAM_IMAGE_CAPTION_LIMIT}-character Telegram budget"
+        )
 
     def publish(self, content: PublicationReference) -> PublishResult:
         url = f"{self.gateway_url}/api/v1/telegram/publications"
@@ -67,21 +111,19 @@ class TelegramPublisher(PublisherInterface):
             "Idempotency-Key": self.idempotency_key(content),
             "X-Request-ID": str(uuid4()),
         }
-        text_limit = (
-            TELEGRAM_IMAGE_CAPTION_LIMIT
-            if self.media is not None
-            else TELEGRAM_TEXT_LIMIT
-        )
         try:
-            formatted_text = self.render_html(self.text, text_limit)
+            formatted_text, parse_mode = self.prepare_publication(self.text, self.media)
         except ValueError as exc:
             return PublishResult(
-                success=False, outcome="failed", error_code="publication_not_ready", error=str(exc),
+                success=False,
+                outcome="failed",
+                error_code="publication_not_ready",
+                error=str(exc),
             )
         payload = {
             "gateway_channel_id": self.gateway_channel_id,
             "text": formatted_text,
-            "parse_mode": "HTML",
+            "parse_mode": parse_mode,
             "disable_web_page_preview": False,
         }
         if self.media is not None:

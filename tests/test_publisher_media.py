@@ -68,6 +68,15 @@ def _asset(
             "generation_status": generation_status,
             "planning_status": planning_status,
             "language_code": language_code,
+            "usage": {
+                "usage_allowed": True,
+                "attribution_required": False,
+                "license_type": "reviewed_permission",
+                "terms_url": "https://official.example/terms",
+                "evidence": "Permission covering this exact test image",
+            }
+            if source == "official"
+            else None,
         },
     )
     db.add(asset)
@@ -93,7 +102,9 @@ def test_factory_selects_ready_neutral_generated_image(db, monkeypatch):
     assert _prepared(db, content, monkeypatch).asset_id == asset.id
 
 
-@pytest.mark.parametrize(("channel_language", "asset_language"), [("en", "ru"), ("ru", "en")])
+@pytest.mark.parametrize(
+    ("channel_language", "asset_language"), [("en", "ru"), ("ru", "en")]
+)
 def test_factory_rejects_media_for_other_language(
     db, monkeypatch, channel_language, asset_language
 ):
@@ -114,9 +125,7 @@ def test_factory_reuses_neutral_media_for_each_language(
 
 
 @pytest.mark.parametrize("generation_status", ["pending", "failed"])
-def test_factory_rejects_unready_generated_media(
-    db, monkeypatch, generation_status
-):
+def test_factory_rejects_unready_generated_media(db, monkeypatch, generation_status):
     post, content = _publication(db)
     _asset(db, post, generation_status=generation_status)
 
@@ -173,10 +182,83 @@ def test_publisher_failure_preserves_failed_state_and_error(db):
 
     class FailingPublisher:
         def publish(self, content):
-            return PublishResult(success=False, outcome="failed", error="gateway unavailable")
+            return PublishResult(
+                success=False, outcome="failed", error="gateway unavailable"
+            )
 
     result = PublisherService(db, publisher=FailingPublisher()).publish(content)
 
     assert result.success is False
     assert content.status == "failed"
     assert content.error_message == "gateway unavailable"
+
+
+@pytest.mark.parametrize("language", ["ru", "en"])
+def test_factory_carries_required_credit_from_existing_asset(db, monkeypatch, language):
+    post, content = _publication(db, language)
+    asset = _asset(
+        db,
+        post,
+        source="official",
+        generation_status=None,
+        planning_status="reference_ready",
+    )
+    metadata = dict(asset.metadata_)
+    metadata["usage"] = {
+        **metadata["usage"],
+        "attribution_required": True,
+        "attribution": "Source: Google.",
+    }
+    asset.metadata_ = metadata
+    db.commit()
+    selected = _prepared(db, content, monkeypatch)
+    assert selected.asset_id == asset.id
+    assert selected.credit == "Source: Google."
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        {},
+        {"usage_allowed": False},
+        {"usage_allowed": True, "attribution_required": True, "attribution": ""},
+    ],
+)
+def test_factory_does_not_select_unknown_denied_or_incomplete_rights(
+    db, monkeypatch, usage
+):
+    post, content = _publication(db)
+    asset = _asset(
+        db,
+        post,
+        source="official",
+        generation_status=None,
+        planning_status="reference_ready",
+    )
+    asset.metadata_ = {**asset.metadata_, "usage": usage}
+    db.commit()
+    assert _prepared(db, content, monkeypatch) is None
+
+
+def test_factory_includes_credit_in_caption_budget(db, monkeypatch):
+    post, content = _publication(db)
+    post.en_content = "N" * 1000
+    asset = _asset(
+        db,
+        post,
+        source="official",
+        generation_status=None,
+        planning_status="reference_ready",
+    )
+    asset.metadata_ = {
+        **asset.metadata_,
+        "usage": {
+            **asset.metadata_["usage"],
+            "attribution_required": True,
+            "attribution": "Source: Google. " + "x" * 100,
+        },
+    }
+    db.commit()
+    with pytest.raises(ValueError, match="1024"):
+        _prepared(db, content, monkeypatch)

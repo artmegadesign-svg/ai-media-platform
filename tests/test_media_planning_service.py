@@ -40,6 +40,13 @@ def test_official_plan_stores_reference_without_downloading():
                 "official_domain": "organization.example",
                 "origin": "official_press_office",
                 "license_type": "official_publication",
+                "usage": {
+                    "usage_allowed": True,
+                    "attribution_required": False,
+                    "license_type": "press_permission",
+                    "terms_url": "https://organization.example/terms",
+                    "evidence": "Reviewed image-specific permission",
+                },
                 "provenance": provenance,
             },
         )
