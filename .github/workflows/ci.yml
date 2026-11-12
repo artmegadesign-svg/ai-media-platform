@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Ruff, pytest (SQLite + PostgreSQL), Alembic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      AI_GATEWAY_URL: https://gateway.example.invalid
+      POSTGRES_DB: amp_quality_test
+      POSTGRES_USER: amp_quality_test
+      POSTGRES_PASSWORD: ci-only
+      AMP_QUALITY_REQUIRE_POSTGRES: '1'
+      AMP_QUALITY_TEST_POSTGRES_SOCKET_DIR: /tmp/amp_quality_test_ci
+      TMPDIR: /tmp
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: amp_quality_test
+          POSTGRES_USER: amp_quality_test
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_INITDB_ARGS: --auth-local=trust
+        # Existing tests deliberately accept only a disposable local Unix socket.
+        # No TCP port is published and no production credentials are used.
+        volumes:
+          - /tmp/amp_quality_test_ci:/var/run/postgresql
+        options: >-
+          --health-cmd "pg_isready -U amp_quality_test -d amp_quality_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.5'
+      - name: Install locked dependencies
+        run: uv sync --locked --group dev
+      - name: Configure isolated PostgreSQL socket
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$PG_CONTAINER" psql -U amp_quality_test -d amp_quality_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET listen_addresses = '';"
+          docker restart "$PG_CONTAINER"
+          for attempt in {1..30}; do
+            if docker exec "$PG_CONTAINER" pg_isready -U amp_quality_test -d amp_quality_test; then
+              break
+            fi
+            sleep 1
+          done
+          uv run --no-sync python - <<'PY'
+          import os
+          import psycopg2
+          with psycopg2.connect(dbname="amp_quality_test", user="amp_quality_test", host=os.environ["AMP_QUALITY_TEST_POSTGRES_SOCKET_DIR"]) as db:
+              with db.cursor() as cursor:
+                  cursor.execute("select current_database(), current_user, current_setting('listen_addresses')")
+                  assert cursor.fetchone() == ("amp_quality_test", "amp_quality_test", "")
+          PY
+          docker exec "$PG_CONTAINER" createdb -U amp_quality_test amp_migrations_test
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+      - name: Diff whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git diff --check "$BASE_SHA"...HEAD
+      - name: Full pytest (PostgreSQL required)
+        run: uv run --no-sync pytest -q -ra --junitxml=pytest-results.xml
+      - name: Reject skipped tests
+        run: |
+          uv run --no-sync python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("pytest-results.xml").getroot()
+          cases = root.findall(".//testcase")
+          skipped = root.findall(".//testcase/skipped")
+          assert cases, "No tests ran"
+          assert not skipped, f"Unexpected skipped tests: {len(skipped)}"
+          print(f"{len(cases)} tests, 0 skipped")
+          PY
+      - name: Alembic upgrade on separate empty database
+        env:
+          DATABASE_URL: postgresql+psycopg2://amp_quality_test@/amp_migrations_test?host=/tmp/amp_quality_test_ci
+        run: |
+          uv run --no-sync python - <<'PY'
+          from alembic import command
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          from sqlalchemy import create_engine, inspect, text
+          import os
+          config = Config("alembic.ini")
+          heads = ScriptDirectory.from_config(config).get_heads()
+          assert len(heads) == 1, f"Expected one Alembic head, got {heads}"
+          engine = create_engine(os.environ["DATABASE_URL"])
+          assert inspect(engine).get_table_names() == [], "Migration DB must start empty"
+          command.upgrade(config, "head")
+          with engine.connect() as db:
+              revisions = db.execute(text("select version_num from alembic_version")).scalars().all()
+          assert revisions == heads, (revisions, heads)
+          print(f"Alembic upgraded empty database to sole head: {heads[0]}")
+          engine.dispose()
+          PY
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: ignore
