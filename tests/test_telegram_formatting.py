@@ -13,10 +13,16 @@ class SafeHTML(HTMLParser):
         super().__init__()
         self.stack = []
         self.text = []
+        self.links = []
 
     def handle_starttag(self, tag, attrs):
         assert tag in {'b', 'i', 'code', 'a'}
         assert attrs == [] or (tag == 'a' and len(attrs) == 1 and attrs[0][0] == 'href')
+        assert 'code' not in self.stack
+        assert tag != 'code' or not self.stack
+        assert tag not in self.stack
+        if tag == 'a':
+            self.links.extend(attrs)
         self.stack.append(tag)
 
     def handle_endtag(self, tag):
@@ -93,3 +99,79 @@ def test_formatted_caption_keeps_credit_and_facts_when_wire_html_overflows():
     caption, mode = TelegramPublisher.prepare_publication(text, media)
     assert mode is None
     assert caption == 'Новость\n\n' + '&' * 400 + '\n\nИсточник & автор'
+
+
+@pytest.mark.parametrize('source,expected', [
+    ('__Внешний **внутренний** текст__', '<b>Внешний внутренний текст</b>'),
+    ('*Внешний _внутренний_ текст*', '<i>Внешний внутренний текст</i>'),
+    ('**Жирный _курсив_ текст**', '<b>Жирный <i>курсив</i> текст</b>'),
+    ('_Курсив **жирный** текст_', '<i>Курсив <b>жирный</b> текст</i>'),
+    ('**Жирный *курсив***', '<b>Жирный <i>курсив</i></b>'),
+    ('***Весь текст***', '<b><i>Весь текст</i></b>'),
+])
+def test_nested_emphasis_uses_context_instead_of_duplicate_tags(source, expected):
+    html = TelegramPublisher.render_html('Новость\n' + source)
+    assert html == '<b>Новость</b>\n\n' + expected
+    assert visible(html).startswith('Новость\n\n')
+
+
+@pytest.mark.parametrize('prefix', ['', '# ', '### '])
+def test_formatted_headline_and_link_attributes_survive_without_string_replacement(prefix):
+    source = prefix + '__Важный **[релиз _модели_](https://example.com/<b>?x=1&y="v")**__\nФакт.'
+    html = TelegramPublisher.render_html(source)
+    assert html == (
+        '<b>Важный <a href="https://example.com/&lt;b&gt;?x=1&amp;y=&quot;v&quot;">'
+        'релиз <i>модели</i></a></b>\n\nФакт.'
+    )
+    assert visible(html) == 'Важный релиз модели\n\nФакт.'
+    parser = SafeHTML()
+    parser.feed(html)
+    # HTMLParser decodes attribute entities; the URL must retain its literal <b>.
+    assert parser.links == [('href', 'https://example.com/<b>?x=1&y="v"')]
+
+
+@pytest.mark.parametrize('heading', [
+    '## Почему это важно', '## VALUE рынка', '### INSIGHT исследования',
+    '  ## **Выводы** и _факты_ ###',
+])
+def test_meaningful_body_headings_are_preserved(heading):
+    html = TelegramPublisher.render_html('Новость\n' + heading + '\nФакт.')
+    expected = {
+        '## Почему это важно': 'Почему это важно',
+        '## VALUE рынка': 'VALUE рынка',
+        '### INSIGHT исследования': 'INSIGHT исследования',
+        '  ## **Выводы** и _факты_ ###': 'Выводы и факты',
+    }[heading]
+    assert visible(html) == 'Новость\n\n' + expected + '\nФакт.'
+    assert '<b>' in html.split('\n\n', 1)[1]
+
+
+@pytest.mark.parametrize('source', [
+    '~~зачёркнуто~~', '**~~зачёркнуто~~**', '1. Первый пункт', '2) Второй пункт',
+    '| Колонка |', '[источник][ref]', '[ref]: https://example.com',
+    'Колонка | Колонка\n--- | ---', 'Факт[^1]',
+    '[outer [inner](https://inner.example)](https://outer.example)',
+    '---', '***', '___', '===', '~~~python',
+    '![картинка](https://example.com/a.png)', '<https://example.com>',
+    '**незакрыто', '__незакрыто', '*незакрыто', '_незакрыто',
+    '**жирный *незакрытый курсив**',
+])
+def test_unsupported_markdown_never_leaks_as_plain_text(source):
+    with pytest.raises(ValueError, match='Markdown'):
+        TelegramPublisher.render_html('Новость\n' + source)
+
+
+@pytest.mark.parametrize('source', [
+    '`код`\nФакт.', '# `код`\nФакт.', 'Новость\n**`код`**',
+    'Новость\n*`код`*', 'Новость\n[`код`](https://example.com)',
+])
+def test_code_inside_formatting_fails_locally(source):
+    with pytest.raises(ValueError, match='code cannot be nested'):
+        TelegramPublisher.render_html(source)
+
+
+def test_plain_math_identifiers_and_literal_markdown_in_code_are_preserved():
+    source = 'Новость\nAPI_v2: 2 * 3 = 6; [sic].\n`~~literal~~ **literal** <b>`'
+    html = TelegramPublisher.render_html(source)
+    assert visible(html) == source.replace('`', '').replace('\n', '\n\n', 1)
+    assert '<code>~~literal~~ **literal** &lt;b&gt;</code>' in html

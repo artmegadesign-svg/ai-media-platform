@@ -30,6 +30,15 @@ unsupported markup fail locally. This is a bounded subset, not a CommonMark engi
 multiline code fences, lists and images within Markdown are unsupported.
 Assistant prose remains rejected. The Writer and its quality contract are unchanged.
 
+Formatting context is tracked during inline rendering; redundant nested bold or
+italic tags are suppressed before HTML generation, without editing rendered HTML
+or link attributes. Telegram forbids code entities overlapping other entities,
+so inline code in bold/italic text, links or the always-bold headline fails
+locally. Unsupported block/reference/strikethrough syntax and unmatched emphasis
+are rejected rather than exposed as raw Markdown. Ordinary heading text,
+including headings starting with words such as "VALUE рынка", is preserved;
+only the reserved complete labels or colon prefixes are removed.
+
 Plain and HTML representations come from the same tokens. Plain fallback preserves
 link destinations as `label (URL)`. Its length accounting is conservative for links:
 link URLs count even when HTML would hide them. Nesting is bounded.
