@@ -7,7 +7,7 @@ from uuid import UUID, uuid4, uuid5
 
 import httpx
 
-from services.ai_engine.agents.quality_agent import QualityAgent
+from services.publisher.telegram_formatting import render_news
 from services.publisher.interface import PublisherInterface
 from services.publisher.media import PublicationMedia
 from services.publisher.models import PublicationReference, PublishResult
@@ -47,14 +47,7 @@ class TelegramPublisher(PublisherInterface):
 
     @staticmethod
     def _render_parts(text: str, credit: str | None) -> tuple[str, str]:
-        if QualityAgent.surface_issues(text):
-            raise ValueError("Publication contains raw or unsuitable content")
-        headline, _, body = text.strip().partition("\n")
-        body = body.strip()
-        plain = headline + ("\n\n" + body if body else "")
-        rendered = "<b>" + escape(headline, quote=False) + "</b>"
-        if body:
-            rendered += "\n\n" + escape(body, quote=False)
+        plain, rendered = render_news(text)
         if credit is not None:
             if not isinstance(credit, str) or not credit.strip():
                 raise ValueError("Image credit must be non-empty text")

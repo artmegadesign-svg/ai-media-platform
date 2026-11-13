@@ -218,7 +218,7 @@ def test_writer_to_outbound_payload_both_languages_once(sessions, monkeypatch, w
     assert len(outbound) == 2 and len(calls) == 2
 
 
-@pytest.mark.parametrize('raw', ['## HOOK\nRaw content', '**Raw content**', 'Если хотите, могу предложить помощь.'])
+@pytest.mark.parametrize('raw', ['```unsupported```', 'Если хотите, могу предложить помощь.'])
 def test_final_guard_blocks_raw_content_without_rewriting_or_repeating(sessions, raw):
     saved = PostService().save('Legacy', raw, raw)
     publisher = PublisherService(session_factory=sessions)
@@ -263,3 +263,41 @@ def test_overlong_caption_fails_locally_without_cutting_or_sending():
         result = publisher.publish(PublicationReference(1, 1, 1))
     assert result.error_code == 'publication_not_ready' and result.outcome == 'failed'
     assert outbound == [] and publisher.text == text
+
+
+def test_legacy_markdown_to_gateway_preserves_post_media_and_once_only_status(sessions):
+    import json
+
+    raw = '## HOOK\n**Заголовок**\n## INSIGHT\n**Факт** & подробности.\n## CONCLUSION'
+    saved = PostService().save('Legacy', raw, raw)
+    with sessions() as db:
+        db.add(MediaAsset(post_id=saved['id'], type='image', source='generated', origin='test',
+                          license_type='generated', url='https://cdn.example/legacy.png',
+                          metadata_={'generation_status': 'ready', 'language_code': None}))
+        db.commit()
+    outbound = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        outbound.append((payload, request.headers['Idempotency-Key']))
+        assert payload['text'] == '<b>Заголовок</b>\n\n<b>Факт</b> &amp; подробности.'
+        assert payload['media'] == {'type': 'image', 'url': 'https://cdn.example/legacy.png'}
+        return httpx.Response(200, json={'status': 'published', 'provider': 'telegram',
+                                        'channel_id': payload['gateway_channel_id'],
+                                        'external_message_id': len(outbound)})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        class Adapter(TelegramPublisher):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs, client=client)
+
+        factory = PublisherFactory()
+        factory.telegram_publisher_class = Adapter
+        service = PublisherService(session_factory=sessions, factory=factory)
+        assert all(r.success for r in service.publish_pending_for_posts([saved['id']]))
+        assert service.publish_pending_for_posts([saved['id']]) == []
+    assert len(outbound) == 2
+    assert len({key for _, key in outbound}) == 2
+    with sessions() as db:
+        assert db.get(Post, saved['id']).ru_content == raw
+        assert {row.status for row in db.query(ChannelContent)} == {'published'}
