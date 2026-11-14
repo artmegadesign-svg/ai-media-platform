@@ -181,7 +181,7 @@ def test_real_rejected_quality_agent_keeps_list_and_creates_no_records(
 ):
     monkeypatch.setattr(AIWriterService, "generate_ru", lambda *_: "bad")
     monkeypatch.setattr(AITranslatorService, "ru_to_en", lambda *_: "EN")
-    expected = [f"{language}: {issue}" for language, text in (("RU", "bad"), ("EN", "EN"))
+    expected = [f"{language}: {issue}" for language, text in (("RU", "bad"),)
                 for issue in QualityAgent().check(text)["issues"]]
 
     result = ContentPipeline().generate_full_content("Rejected quality")
