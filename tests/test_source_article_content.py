@@ -205,5 +205,3 @@ def test_mixed_rss_text_and_blocks_preserve_intro_and_inline_words():
 
 def test_generic_main_without_matching_article_heading_is_not_scraped():
     assert extract_article('<main><p>' + EXPECTED + '</p></main>', 'Other title') is None
-
-
