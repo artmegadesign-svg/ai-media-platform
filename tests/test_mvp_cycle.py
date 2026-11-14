@@ -263,3 +263,57 @@ def test_existing_source_skips_intelligence_and_generation(monkeypatch):
     assert "intelligence" not in events
     assert content.calls == 0
     assert result["publication_results"] == []
+
+
+def test_concurrent_cycles_can_both_enter_ai_before_post_is_persisted(monkeypatch):
+    """Characterize the remaining cross-cycle AI spend risk; no real AI or DB I/O."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Lock
+
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    barrier = Barrier(2)
+    lock = Lock()
+    calls = []
+
+    class ConcurrentContent:
+        def generate(self, approved):
+            with lock:
+                calls.append(len(approved))
+            barrier.wait(timeout=10)
+            return [{"post_created": False, "post_id": None}]
+
+    def cycle(_):
+        events = []
+        return run_mvp_cycle(
+            news_service=NewsServiceStub([_news(99)], events),
+            intelligence_service=IntelligenceStub([object()], events),
+            content_service=ConcurrentContent(),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(cycle, range(2)))
+
+    assert calls == [1, 1]
+    assert all(result["post_ids"] == [] for result in results)
+
+
+def test_generation_failure_is_not_cached_between_cycle_invocations(monkeypatch):
+    """Characterize repeated AI cost risk if generation fails before persistence."""
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    invoke, _, _, content, _, _ = _run(
+        content_error=RuntimeError("simulated failure after external AI work")
+    )
+
+    for _ in range(2):
+        try:
+            invoke()
+        except RuntimeError as exc:
+            assert "simulated failure" in str(exc)
+        else:
+            raise AssertionError("generation failure should propagate")
+
+    assert content.calls == 2
