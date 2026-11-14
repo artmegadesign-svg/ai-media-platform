@@ -16,7 +16,8 @@ from services.media.resolver import MediaStrategy
 
 
 class GeneratorServiceProtocol(Protocol):
-    def generate(self, topic: str, *, source_url: str | None = None) -> dict: ...
+    def generate(self, topic: str, *, source_url: str | None = None,
+                 source_content: str | None = None) -> dict: ...
 
 
 class IntelligenceContentGenerationService:
@@ -47,7 +48,7 @@ class IntelligenceContentGenerationService:
         self.generation_service_factory = generation_service_factory
 
     def generate(self, results: Iterable[IntelligenceResult]) -> list[dict]:
-        """Pass normalized news headlines to the existing generation entry point."""
+        """Pass existing normalized source evidence without fetching the source again."""
         generated = []
         for result in results:
             if not result.publish:
@@ -57,7 +58,10 @@ class IntelligenceContentGenerationService:
             if not topic:
                 continue
 
-            content = self.generator.generate(topic, source_url=result.news.url)
+            kwargs = {"source_url": result.news.url}
+            if result.news.content:
+                kwargs["source_content"] = result.news.content
+            content = self.generator.generate(topic, **kwargs)
             orchestration = {
                 **content,
                 "source_id": str(result.news.id),

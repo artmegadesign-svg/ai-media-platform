@@ -7,9 +7,13 @@ class GeneratorService:
         self.pipeline = ContentPipeline()
 
 
-    def generate(self, topic: str, *, source_url: str | None = None) -> dict:
+    def generate(self, topic: str, *, source_url: str | None = None,
+                 source_content: str | None = None) -> dict:
 
-        result = self.pipeline.generate_full_content(topic, source_url=source_url)
+        kwargs = {"source_url": source_url}
+        if source_content:
+            kwargs["source_content"] = source_content
+        result = self.pipeline.generate_full_content(topic, **kwargs)
 
         if result.get("status") == "duplicate":
             return result

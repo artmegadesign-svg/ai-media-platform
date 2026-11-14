@@ -43,3 +43,21 @@ persistence, escaping, transport boundaries, ready fixture media, no repeated se
 and existing deduplication/reliability behavior on isolated SQLite/PostgreSQL.
 Real LLM style/translation fidelity and final human editorial acceptance still
 require a separately authorized controlled review; no paid API is used in tests.
+
+### Bounded news generation recovery
+
+Writer and Translator target 760–840 visible characters; QualityAgent still
+requires 700–900. ContentPipeline checks RU before translation and permits one
+extra call per language only when every reported issue is a known length or
+format issue. Empty content, assistant phrases, unknown issues and empty quality
+results fail closed. Exhausted RU skips translation; exhausted EN never reruns RU.
+The maximum is two Writer calls and two Translator calls (no gateway retries).
+Only final approved texts are persisted; rejection reports final attempted checks.
+
+SOURCE → INTELLIGENCE already carries normalized NewsItem.content (RSS
+summary/content, potentially partial). Intelligence now forwards that optional
+evidence through GeneratorService to Writer with the original title and source
+URL. No source fetch, database model change or new ingestion mechanism is used.
+The source URL is attribution, not evidence of facts beyond the supplied content.
+Length compliance and factual accuracy remain model dependent; retries never
+justify inventing details when source evidence is insufficient.

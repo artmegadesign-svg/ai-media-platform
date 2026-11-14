@@ -144,7 +144,7 @@ def test_writer_and_translator_prompts_use_short_plain_news_without_changing_fac
     calls = stub_llm(monkeypatch, news(), news('en'))
     assert AIWriterService().generate_ru('TopicModel version 2 at https://example.com') == news()
     assert 'TopicModel version 2 at https://example.com' in calls[0][1]
-    assert '700–900' in get_writer_system_prompt()
+    assert '760–840' in get_writer_system_prompt()
     assert 'plain text' in get_writer_system_prompt().lower()
     assert AITranslatorService().ru_to_en(news()) == news('en')
     assert news() in calls[1][1]
@@ -153,7 +153,7 @@ def test_writer_and_translator_prompts_use_short_plain_news_without_changing_fac
 
 @pytest.mark.parametrize('bad_language', ['ru', 'en'])
 @pytest.mark.parametrize('kind', ['empty', 'short', 'long', 'assistant', 'markup'])
-def test_bad_ru_or_en_rejects_before_persistence_without_retry(sessions, monkeypatch, bad_language, kind):
+def test_bad_ru_or_en_rejects_before_persistence_with_bounded_retry(sessions, monkeypatch, bad_language, kind):
     invalid = {'empty': ' ', 'short': 'Short news', 'long': news() + ' too long' * 100,
                'assistant': news() + '\n\nЕсли хотите, могу предложить ещё вариант.',
                'markup': news() + '\n\n[raw](https://example.com)'}[kind]
@@ -162,7 +162,8 @@ def test_bad_ru_or_en_rejects_before_persistence_without_retry(sessions, monkeyp
     result = ContentPipeline().generate_full_content('TopicModel')
     assert result['status'] == 'rejected'
     assert any(issue.startswith(bad_language.upper() + ': ') for issue in result['quality_issues'])
-    assert len(calls) == 2
+    retryable = kind in {'short', 'long', 'markup'}
+    assert len(calls) == (1 if bad_language == 'ru' else 2) + int(retryable)
     with sessions() as db:
         assert all(db.query(model).count() == 0 for model in (
             Post, ContentVariant, ChannelContent, MediaAsset, Metric,
