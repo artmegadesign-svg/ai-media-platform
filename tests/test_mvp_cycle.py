@@ -227,3 +227,39 @@ def test_duplicate_or_missing_creation_flag_cannot_publish_old_post():
     assert invoke()["post_ids"] == []
     assert "publish" not in events
     assert agents == []
+
+
+def test_duplicate_source_within_same_collection_is_analyzed_once(monkeypatch):
+    """One duplicated URL in a batch must not trigger two paid generation paths."""
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    item = _news(77)
+    invoke, _, intelligence, _, _, _ = _run(
+        items=[item, item], content_result=[{"post_created": False, "post_id": None}]
+    )
+
+    result = invoke()
+
+    assert result["collected_count"] == 2
+    assert intelligence.received == [item]
+    assert result["post_ids"] == []
+
+
+def test_existing_source_skips_intelligence_and_generation(monkeypatch):
+    """A persisted source must not incur a new AI call after a restart."""
+    from services.ai_engine.services.post_service import PostService
+    from services.news.normalizer import source_identity
+
+    item = _news(88)
+    key = source_identity(item.url)[1]
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: {key})
+    invoke, events, intelligence, content, _, _ = _run(items=[item])
+
+    result = invoke()
+
+    assert result["collected_count"] == 1
+    assert result["approved_count"] == 0
+    assert "intelligence" not in events
+    assert content.calls == 0
+    assert result["publication_results"] == []
