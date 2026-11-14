@@ -16,6 +16,7 @@ _BLOCKS = {"p", "h1", "h2", "h3", "h4", "li", "blockquote"}
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 _SKIP = {
     "script", "style", "noscript", "template", "svg", "canvas", "iframe",
+    "audio", "video",  # Player fallback text is not article evidence.
     "nav", "footer", "header", "aside", "form", "button", "dialog",
 }
 _CHROME = re.compile(

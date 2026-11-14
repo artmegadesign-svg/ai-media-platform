@@ -205,3 +205,77 @@ def test_mixed_rss_text_and_blocks_preserve_intro_and_inline_words():
 
 def test_generic_main_without_matching_article_heading_is_not_scraped():
     assert extract_article('<main><p>' + EXPECTED + '</p></main>', 'Other title') is None
+
+
+@pytest.mark.parametrize("tag", ["audio", "video"])
+@pytest.mark.parametrize("inline", [False, True], ids=["standalone", "inside-paragraph"])
+def test_media_player_fallback_is_removed_without_losing_surrounding_facts(tag, inline):
+    player = (
+        f'<{tag} controls><source src="/recording">'
+        f'<p>Your browser does not support the {tag} element.</p>'
+        f'Localized technical player fallback.</{tag}>'
+    )
+    if inline:
+        html = HTML.replace("with a", player + "with a")
+    else:
+        html = HTML.replace('<div itemprop="articleBody">',
+                            '<div itemprop="articleBody">' + player)
+    item, calls = collect(html)
+    assert item.content == EXPECTED
+    assert calls == [OpenAINewsCollector.feed_url, item.url]
+    assert item.image_discovery_status == "complete"
+    assert [image.discovery_method for image in item.official_images] == ["release_meta", "release_body"]
+    # The same structural rule also cleans RSS on a page failure.
+    assert clean_rss('<p>Confirmed facts before.</p>' + player + '<p>Confirmed facts after.</p>') == (
+        'Confirmed facts before.\n\nConfirmed facts after.'
+    )
+
+
+def test_article_body_separates_metadata_but_keeps_names_dates_and_roles_in_news():
+    metadata = (
+        '<p><time datetime="2026-11-14">November 14, 2026</time></p>'
+        '<p>Ada Ivanova</p><p>Research Director</p>'
+    )
+    facts = (
+        'On November 14, 2026, Research Director Ada Ivanova presented the AI model '
+        'with a measured 25% reduction in latency and support for 12 languages.'
+    )
+    # Even identical names, dates and roles inside the body remain evidence.
+    html = '<article>' + metadata + '<div itemprop="articleBody"><p>' + facts + '</p></div></article>'
+    assert extract_article(html, 'Update') == facts
+
+
+def test_metadata_without_a_body_boundary_is_not_guessed_from_names_dates_or_schema():
+    metadata = (
+        '<p><time datetime="2026-11-14" itemprop="datePublished">November 14, 2026</time></p>'
+        '<p><span itemprop="author">Ada Ivanova</span>, '
+        '<span itemprop="jobTitle">Research Director</span></p>'
+    )
+    facts = (
+        'On November 14, 2026, Research Director Ada Ivanova presented the AI model '
+        'with a measured 25% reduction in latency and support for 12 languages.'
+    )
+    assert extract_article('<article>' + metadata + '<p>' + facts + '</p></article>', 'Update') == (
+        'November 14, 2026\n\nAda Ivanova, Research Director\n\n' + facts
+    )
+
+
+def test_media_transcript_and_quoted_browser_message_outside_player_are_kept():
+    facts = (
+        'The team improved video accessibility. Its transcript quotes the warning '
+        '"Your browser does not support the audio element." as a reproduced bug.'
+    )
+    html = '<article><audio>Technical fallback</audio><p>' + facts + '</p></article>'
+    assert extract_article(html, 'Update') == facts
+
+
+@pytest.mark.parametrize("tag", ["audio", "video"])
+def test_player_fallback_alone_cannot_make_an_article_pass_content_checks(tag):
+    html = (
+        f'<article><{tag}><p>Your browser does not support the {tag} element. '
+        f'Please upgrade your browser to play this recording on this page.</p></{tag}></article>'
+    )
+    item, calls = collect(html)
+    assert item.content == 'Learn more about our model update.'
+    assert len(calls) == 2
+    assert item.image_discovery_status == 'complete'
