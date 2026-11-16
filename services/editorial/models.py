@@ -30,3 +30,4 @@ class EditorialEvaluation:
     impact: float
     audience: float
     novelty: float
+    blocked_reason: str | None = None

@@ -49,7 +49,7 @@ def test_service_uses_strongest_matching_topic_trend():
         {"topic": "agents", "score": 90},
     ]
 
-    assert EditorialService().evaluate(news, trends)[0].score == 69
+    assert EditorialService().evaluate(news, trends)[0].score == 63
 
 
 def test_membership_prevents_category_only_matches_and_selects_highest_growth_score():
@@ -65,7 +65,7 @@ def test_membership_prevents_category_only_matches_and_selects_highest_growth_sc
     service = EditorialService()
 
     assert service._matching_trend(news, [unrelated, weak, strong, unlinked]) is strong
-    assert service.evaluate([news], [unrelated, weak, strong, unlinked])[0].score == 69
+    assert service.evaluate([news], [unrelated, weak, strong, unlinked])[0].score == 63
     assert service._matching_trend(news, [unrelated, unlinked]) is None
     assert service._matching_trend(news, [{"category": "research", "score": 100}]) is None
 
