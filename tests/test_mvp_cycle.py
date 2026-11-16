@@ -317,3 +317,44 @@ def test_generation_failure_is_not_cached_between_cycle_invocations(monkeypatch)
             raise AssertionError("generation failure should propagate")
 
     assert content.calls == 2
+
+
+def test_canonical_url_variants_are_processed_only_once(monkeypatch):
+    """Normalization-equivalent source URLs must share the same batch identity."""
+    from services.ai_engine.services.post_service import PostService
+    from services.news.normalizer import source_identity
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    first = _news(401)
+    first.url = "https://EXAMPLE.com/401/?utm_source=feed#headline"
+    second = _news(402)
+    second.url = "https://example.com/401"
+    assert source_identity(first.url) == source_identity(second.url)
+
+    invoke, _, intelligence, content, _, _ = _run(
+        items=[first, second], content_result=[{"post_created": False, "post_id": None}]
+    )
+    result = invoke()
+
+    assert result["collected_count"] == 2
+    assert intelligence.received == [first]
+    assert content.calls == 1
+
+
+def test_first_unique_source_order_preserved_with_repeated_variants(monkeypatch):
+    """Keep the first occurrence of each source, not sorted or last occurrences."""
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    first, second, third = _news(501), _news(502), _news(503)
+    first_variant = _news(504)
+    first_variant.url = "https://EXAMPLE.com/501/?utm_medium=feed#part"
+    invoke, _, intelligence, _, _, _ = _run(
+        items=[second, first, second, third, first_variant],
+        content_result=[{"post_created": False, "post_id": None}],
+    )
+
+    result = invoke()
+
+    assert result["collected_count"] == 5
+    assert intelligence.received == [second, first, third]
