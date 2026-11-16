@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 
 from services.news.models import NewsItem, OfficialImagePolicy
 from services.news.collectors.images import image_candidates
+from services.news.collectors.article import clean_rss, extract_article
 from services.news.urls import approved_url
 
 
@@ -92,7 +93,7 @@ class RSSNewsCollector(NewsCollector):
             source=self.source,
             title=title,
             url=url,
-            content=self._text(entry, "description", "summary", "content") or None,
+            content=self._content(entry, title),
             published_at=self._date(published),
         )
         if not approved_url(url, self.page_hosts):
@@ -124,10 +125,34 @@ class RSSNewsCollector(NewsCollector):
                 base_url=base_url,
             )
             item.image_discovery_status = "complete"
+            # Reuse the same validated response, independently of image rights.
+            # An ambiguous/empty article leaves the cleaned RSS evidence intact.
+            article = extract_article(
+                page.text if isinstance(page, SourceDocument) else page, title,
+            )
+            if article:
+                item.content = article
         except (OSError, URLError, httpx.HTTPError, ValueError):
             item.image_discovery_status = "temporary_error"
             item.image_discovery_error = "release_page_unavailable"
         return item
+
+    @staticmethod
+    def _content(entry: ElementTree.Element, title: str) -> str | None:
+        for name in ("description", "summary", "content"):
+            element = entry.find(name)
+            if element is None:
+                element = entry.find(f"{{*}}{name}")
+            if element is not None:
+                # Preserve nested RSS/Atom XHTML as well as escaped HTML/CDATA.
+                fragment = (
+                    ElementTree.tostring(element, encoding="unicode")
+                    if len(element) else element.text or ""
+                )
+                text = clean_rss(fragment, title)
+                if text:
+                    return text
+        return None
 
     @staticmethod
     def _text(entry: ElementTree.Element, *names: str) -> str:
