@@ -32,3 +32,22 @@ Before claiming unattended production readiness: (1) decide cross-cycle AI reser
 ## Gateway boundary
 
 AMP's Telegram adapter is inspected, not the separate `ai-gateway` implementation. Gateway-side deduplication guarantees and provider retry semantics cannot be certified from AMP code alone. Request a separate Gateway contract review before relying on end-to-end exactly-once delivery.
+
+
+## Integration update — 2026-11-16
+
+The historical audit above was conducted against `main@199d1a5f7333697143a48ef29458d01b00372aef` and must **not** be interpreted as an audit of every component currently on main.
+
+Current integration target: `main@b595d8b5b22169b04ac6d6216b2657e0e6f82d6e`. PR #32 has already been merged into main, along with intervening News/Editorial work. This PR preserves those upstream implementations: it changes only `services/orchestration/mvp_cycle.py`, `tests/test_mvp_cycle.py`, and this audit. No scoring, content generation, delivery, gateway, model, migration or infrastructure code is changed.
+
+Regression coverage now includes identical batch URLs, canonical-equivalent URL variants, persisted sources, first-occurrence ordering, no repeated in-batch Intelligence entry, only current-run Post IDs entering Publisher, and characterization tests for concurrent cycles and interrupted generation. The two latter tests intentionally document **unfixed** cross-cycle cost risks; they are not safeguards.
+
+Merge readiness is contingent on a **new** full GitHub CI run against the updated PR head, including Ruff, PostgreSQL pytest, and Alembic. Historical green CI is not evidence for the updated head. No real provider calls, deployment, or main merge are authorized.
+
+### Design recommendation only — AI work reservation (not implemented)
+
+**Preferred: PostgreSQL lease table**, within the existing modular monolith and current DB boundary. Proposed unique `source_key`, `status`, `lease_token` (fencing token), `lease_expires_at`, `attempt_count`, and timestamps. Claim via atomic `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE lease_expires_at < now()` (or equivalent transactional conditional update); one owner per source. Commit claim before external AI work; do not hold a DB transaction open during provider calls. On success, persist Post and mark completed under token validation, ideally atomically. On crash, lease expires and a worker can claim again after checking whether a Post already exists. TTL should exceed normal generation duration or be renewed by heartbeat; fencing tokens prevent a stale worker from overwriting the new owner's state. A timeout **cannot guarantee** that a paid request did not finish; uncertain provider outcomes require bounded retry policy, provider-side idempotency support if available, and cost observability. Unique Post source key remains the final database guard. A new table and Alembic migration would be necessary if no existing durable reservation record is reusable; requires explicit architectural approval. Rough effort: medium (schema, orchestration ownership, heartbeat/expiry, concurrency tests, operational metrics).
+
+**Alternative: Redis** `SET key token NX PX ttl` with token-checked release/renew and expiry. Lower latency, but adds a new operational dependency and must be coordinated with durable PostgreSQL Post state; crash/partition/expiry still allow duplicate paid work, and safe fencing requires durable ownership checks. Rough effort: medium-to-high including operations. For Phase 1, PostgreSQL is simpler and preferred.
+
+Neither approach provides exactly-once paid AI calls without provider-supported idempotency or durable provider request-result lookup. This is a proposal, not a change request to Writer/Intelligence/Gateway.
