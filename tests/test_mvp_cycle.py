@@ -227,3 +227,134 @@ def test_duplicate_or_missing_creation_flag_cannot_publish_old_post():
     assert invoke()["post_ids"] == []
     assert "publish" not in events
     assert agents == []
+
+
+def test_duplicate_source_within_same_collection_is_analyzed_once(monkeypatch):
+    """One duplicated URL in a batch must not trigger two paid generation paths."""
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    item = _news(77)
+    invoke, _, intelligence, _, _, _ = _run(
+        items=[item, item], content_result=[{"post_created": False, "post_id": None}]
+    )
+
+    result = invoke()
+
+    assert result["collected_count"] == 2
+    assert intelligence.received == [item]
+    assert result["post_ids"] == []
+
+
+def test_existing_source_skips_intelligence_and_generation(monkeypatch):
+    """A persisted source must not incur a new AI call after a restart."""
+    from services.ai_engine.services.post_service import PostService
+    from services.news.normalizer import source_identity
+
+    item = _news(88)
+    key = source_identity(item.url)[1]
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: {key})
+    invoke, events, intelligence, content, _, _ = _run(items=[item])
+
+    result = invoke()
+
+    assert result["collected_count"] == 1
+    assert result["approved_count"] == 0
+    assert "intelligence" not in events
+    assert content.calls == 0
+    assert result["publication_results"] == []
+
+
+def test_concurrent_cycles_can_both_enter_ai_before_post_is_persisted(monkeypatch):
+    """Characterize the remaining cross-cycle AI spend risk; no real AI or DB I/O."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Lock
+
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    barrier = Barrier(2)
+    lock = Lock()
+    calls = []
+
+    class ConcurrentContent:
+        def generate(self, approved):
+            with lock:
+                calls.append(len(approved))
+            barrier.wait(timeout=10)
+            return [{"post_created": False, "post_id": None}]
+
+    def cycle(_):
+        events = []
+        return run_mvp_cycle(
+            news_service=NewsServiceStub([_news(99)], events),
+            intelligence_service=IntelligenceStub([object()], events),
+            content_service=ConcurrentContent(),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(cycle, range(2)))
+
+    assert calls == [1, 1]
+    assert all(result["post_ids"] == [] for result in results)
+
+
+def test_generation_failure_is_not_cached_between_cycle_invocations(monkeypatch):
+    """Characterize repeated AI cost risk if generation fails before persistence."""
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    invoke, _, _, content, _, _ = _run(
+        content_error=RuntimeError("simulated failure after external AI work")
+    )
+
+    for _ in range(2):
+        try:
+            invoke()
+        except RuntimeError as exc:
+            assert "simulated failure" in str(exc)
+        else:
+            raise AssertionError("generation failure should propagate")
+
+    assert content.calls == 2
+
+
+def test_canonical_url_variants_are_processed_only_once(monkeypatch):
+    """Normalization-equivalent source URLs must share the same batch identity."""
+    from services.ai_engine.services.post_service import PostService
+    from services.news.normalizer import source_identity
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    first = _news(401)
+    first.url = "https://EXAMPLE.com/401/?utm_source=feed#headline"
+    second = _news(402)
+    second.url = "https://example.com/401"
+    assert source_identity(first.url) == source_identity(second.url)
+
+    invoke, _, intelligence, content, _, _ = _run(
+        items=[first, second], content_result=[{"post_created": False, "post_id": None}]
+    )
+    result = invoke()
+
+    assert result["collected_count"] == 2
+    assert intelligence.received == [first]
+    assert content.calls == 1
+
+
+def test_first_unique_source_order_preserved_with_repeated_variants(monkeypatch):
+    """Keep the first occurrence of each source, not sorted or last occurrences."""
+    from services.ai_engine.services.post_service import PostService
+
+    monkeypatch.setattr(PostService, "get_existing_source_keys", lambda self, keys: set())
+    first, second, third = _news(501), _news(502), _news(503)
+    first_variant = _news(504)
+    first_variant.url = "https://EXAMPLE.com/501/?utm_medium=feed#part"
+    invoke, _, intelligence, _, _, _ = _run(
+        items=[second, first, second, third, first_variant],
+        content_result=[{"post_created": False, "post_id": None}],
+    )
+
+    result = invoke()
+
+    assert result["collected_count"] == 5
+    assert intelligence.received == [second, first, third]

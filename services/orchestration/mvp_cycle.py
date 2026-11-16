@@ -74,7 +74,13 @@ def run_mvp_cycle(
     raw_news = _collect_raw_news(news)
     keyed_news = [(item, source_identity(item.url)[1]) for item in raw_news]
     existing = PostService().get_existing_source_keys(key for _, key in keyed_news)
-    unseen = [item for item, key in keyed_news if key not in existing]
+    # Avoid repeating Intelligence/paid generation for the same URL in one batch.
+    seen_keys = set(existing)
+    unseen = []
+    for item, key in keyed_news:
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unseen.append(item)
     approved = intelligence.analyze(unseen) if unseen else []
     if approved:
         content = content_service or create_intelligence_content_generation_service()
