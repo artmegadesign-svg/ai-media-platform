@@ -77,10 +77,10 @@ _EDUCATION = re.compile(r"\b(?:courses?|curriculum|training program|education(?:
 _CORPORATE = re.compile(r"\b(?:customer stor(?:y|ies)|success stor(?:y|ies)|sponsor\w*|advertis\w*|campaign|annual report|корпоративн\w*|реклам\w*)\b", re.I)
 _PUBLICATION = re.compile(r"\b(?:publish(?:es|ed|ing)?|releas(?:e|es|ed|ing)|публику\w*|опубликов\w*)\b", re.I)
 _UPDATE = re.compile(r"\b(?:updates?|upgrades?|adds?|added|обнов\w*|добав\w*)\b", re.I)
-_AVAILABILITY = re.compile(r"\b(?:available (?:now|today|to|for)|(?:now |generally )available|developers can|download|доступ\w*)\b", re.I)
-_CAPABILITY = re.compile(r"\b(?:supports?|enables?|provides?|allows?|reduces?|improves?|evaluate|поддерж\w*|позвол\w*|снижа\w*)\b", re.I)
+_AVAILABILITY = re.compile(r"\b(?:available (?:now|today|to|for|through|via)|available in (?:(?:public|private|limited) )?preview|(?:now |generally )available|developers can|download|доступ\w*)\b", re.I)
+_CAPABILITY = re.compile(r"\b(?:supports?|enables?|provides?|allows?|reduces?|improves?|handles?|gives?|delivers?|evaluate|поддерж\w*|позвол\w*|снижа\w*)\b", re.I)
 _MEASURE = re.compile(r"\b\d[\d,.]*\s*(?:%|[- ]tokens?\b|languages?\b|milliseconds?\b|ms\b|questions?\b|язык\w*|токен\w*)", re.I)
-_CONCRETE_CAPABILITY = re.compile(r"\b(?:streaming|tool calling|structured outputs|multimodal|offline|local inference|code execution)\b", re.I)
+_CONCRETE_CAPABILITY = re.compile(r"\b(?:streaming|tool calling|structured outputs|multimodal|offline|local inference|code execution|multi-step workflows)\b", re.I)
 _ARTIFACT = re.compile(r"\b(?:paper|dataset|code)\s+(?:is |are )?(?:now )?available\b|arxiv\.org/|doi\.org/", re.I)
 
 
@@ -99,7 +99,7 @@ _DATE_BLOCK = re.compile(
     r"\.? \d{1,2},? \d{4}|\d{4}-\d{2}-\d{2})", re.I,
 )
 _ROLE_BLOCK = re.compile(
-    r"(?:Product Manager|Research Director|(?:Senior )?(?:Research Scientist|Software Engineer)|"
+    r"(?:Product Manager|Research Director|Product Director|Design & Engineering Lead|Principal Scientist|(?:Senior )?(?:Research Scientist|Software Engineer)|"
     r"(?:VP|Vice President) of (?:Product|Engineering|Research))"
     r"(?:, [\w &-]+)?", re.I,
 )
@@ -114,7 +114,10 @@ _PRODUCT_UPGRADE = re.compile(
 
 def _uncertain(text: str) -> bool:
     # A supported yes/no question format is not a denial of a release.
-    return bool(_UNCERTAIN_EVENT.search(re.sub(r"\byes/no\b", "binary", text, flags=re.I)))
+    return bool(
+        _UNCERTAIN_EVENT.search(re.sub(r"\byes/no\b", "binary", text, flags=re.I))
+        or re.search(r"\b(?:next|coming)\s+(?:(?:few|several)\s+)?(?:weeks?|months?|years?)\b", text, re.I)
+    )
 
 
 def evidence_sentences(content: str) -> list[str]:
@@ -154,9 +157,31 @@ def evidence_sentences(content: str) -> list[str]:
     return result
 
 
-def _matches_subject(subject: set[str], text: str) -> bool:
+def _matches_subject(subject: set[str], text: str, title: str = "") -> bool:
     words = {word.casefold() for word in re.findall(r"\w+", text)}
-    return bool(subject) and subject <= words
+    if subject and subject <= words:
+        return True
+    # A branded name may be shortened by dropping its first component, provided
+    # the distinctive remainder and object type remain, with no rival prefix.
+    ordered = list(dict.fromkeys(word.casefold() for word in re.findall(r"\w+", title.split(":", 1)[0]) if word.casefold() in subject))
+    if len(ordered) < 2:
+        return False
+    short = ordered[1:]
+    if not set(short) <= words:
+        return False
+    phrase = r"\s+".join(re.escape(word) for word in short)
+    if _API_OBJECT.search(title):
+        phrase += r"\s+API\b"
+    elif _PRODUCT_UPGRADE.search(title):
+        phrase += r"\b"
+    else:
+        return False
+    for match in re.finditer(r"\b" + phrase, text, re.I):
+        prefix = text[:match.start()].rstrip()
+        previous = re.search(r"([\w'-]+)$", prefix)
+        if not previous or previous.group().casefold() in {"the", "our", "this", "in", "to", "with", "of", "through", "via", "on", "for", "and"}:
+            return True
+    return False
 
 
 def _event_category(sentence: str) -> str:
@@ -168,7 +193,7 @@ def _event_category(sentence: str) -> str:
         return "education"
     if _CORPORATE.search(sentence):
         return "corporate"
-    if _PRODUCT_UPGRADE.search(sentence):
+    if _PRODUCT_UPGRADE.search(sentence) or re.search(r"\b(?:new features|new capabilities|on more devices)\b", sentence, re.I):
         return "product_update"
     # Bind publication/release to its object, before background qualifications.
     event = _RELEASE_EVENT.search(sentence) or _PUBLICATION.search(sentence)
@@ -186,6 +211,8 @@ def _event_category(sentence: str) -> str:
     if event or available:
         if _API_OBJECT.search(obj):
             return "api_release"
+        if event and re.search(r",\s*(?:an?|the)\s+(?:new\s+)?AI\s+(?:solution|platform|service)\b", sentence[event.end():], re.I):
+            return "tool_release"
         if _TOOL_NOUN.search(obj) or _TOOL_OBJECT.search(obj):
             return "tool_release"
         if _MODEL_OBJECT.search(obj):
@@ -208,7 +235,7 @@ def _subject_words(title: str) -> set[str]:
                "or", "as", "is", "are", "was", "has", "have"}
     generic |= {"gets", "get", "a", "major", "significant", "upgrade", "upgrades", "s",
                 "today", "announces", "introduce", "launch", "release"}
-    obj = re.split(r"\b(?:powered by|based on|through|with)\b", title, maxsplit=1, flags=re.I)[0]
+    obj = re.split(r"\b(?:powered by|based on|through|with)\b", title.split(":", 1)[0], maxsplit=1, flags=re.I)[0]
     upgrade = re.search(r"\b(?:gets?|receives?|has received)\b", obj, re.I)
     action = _RELEASE_EVENT.search(obj) or _PUBLICATION.search(obj) or _UPDATE.search(obj)
     if upgrade:
@@ -231,12 +258,16 @@ def event_category(title: str, content: str = "") -> str:
         return "corporate"
     if headline not in {"general", "rumor"} and lead:
         subject = _subject_words(title)
-        if (not subject or _matches_subject(subject, lead[0])) and _event_category(lead[0]) == "rumor":
+        if (not subject or _matches_subject(subject, lead[0], title)) and _event_category(lead[0]) == "rumor":
             return "rumor"
     if re.search(r"\b(?:roundup|retrospective|last month|last year)\b", title, re.I):
         return "general"
     if lead and re.match(r"(?:previously|originally|last month|last year)\b", lead[0], re.I):
         return "general"
+    if (headline == "model_release" and lead and not re.search(r"\bmodel\b", title, re.I)
+            and _matches_subject(_subject_words(title), lead[0], title)
+            and re.search(r",\s*(?:an?|the)\s+AI\s+(?:solution|platform|service)\b", lead[0], re.I)):
+        return "tool_release"
     if headline != "general":
         return headline
     # A title without a verb needs facts about its subject, not another release.
@@ -244,7 +275,7 @@ def event_category(title: str, content: str = "") -> str:
     for sentence in lead:
         if re.search(r"\b(?:about the author|author biography|previously|research interests|written by)\b", sentence, re.I):
             continue
-        if subject and not _matches_subject(subject, sentence):
+        if subject and not _matches_subject(subject, sentence, title):
             continue
         candidate = _event_category(sentence)
         if candidate != "general":
@@ -280,7 +311,7 @@ def event_impact(title: str, content: str, category: str) -> int:
     subject = _subject_words(title)
     first = sentences[0]
     if subject:
-        if not _matches_subject(subject, first):
+        if not _matches_subject(subject, first, title):
             return base
     elif _event_category(first) != category:
         return base
@@ -296,19 +327,26 @@ def event_impact(title: str, content: str, category: str) -> int:
             continue
         if re.match(r"(?:another|elsewhere|previously|in other)\b", sentence, re.I):
             break
-        same = _matches_subject(subject, sentence)
+        same = _matches_subject(subject, sentence, title)
         if _event_category(sentence) in {"api_release", "tool_release", "model_release", "product_update", "research"} and not same:
             # A concrete second object breaks coreference for subsequent "it".
             if not re.match(r"(?:it|its|the (?:API|tool|model|paper|study|update))\b", sentence, re.I):
                 break
-        if (same or re.match(r"(?:it|its|this|evaluate|the (?:API|tool|model|paper|study|update)|developers can)\b", sentence, re.I)):
+        referent = re.match(r"(?:it|its|this|evaluate|the (?:API|tool|model|paper|study|update|platform|solution|service)|developers can|initially available)\b", sentence, re.I)
+        dependent = re.search(r",\s*it\s+(?:enables|supports|provides|allows)\b", sentence, re.I)
+        if same or referent or dependent:
             linked.append(sentence)
     lead = " ".join(linked)
     if category == "research":
         strong = bool(_ARTIFACT.search(lead) and _MEASURE.search(lead) and _PUBLICATION.search(lead))
     else:
         modalities = {word.casefold().rstrip("s") for word in re.findall(r"\b(?:text|images?|audio|video|PDFs?)\b", lead, re.I)}
-        strong = bool(_AVAILABILITY.search(lead) and _CAPABILITY.search(lead)
+        available = any(
+            _AVAILABILITY.search(sentence)
+            and not re.search(r"\b(?:waitlist|waiting list|pre[- ]order|coming soon|over the next)\b", sentence, re.I)
+            for sentence in linked
+        )
+        strong = bool(available and _CAPABILITY.search(lead)
                       and (_MEASURE.search(lead) or _CONCRETE_CAPABILITY.search(lead)
                            or len(modalities) >= 3))
     return 80 if strong else base
