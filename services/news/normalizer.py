@@ -78,8 +78,8 @@ _CORPORATE = re.compile(r"\b(?:customer stor(?:y|ies)|success stor(?:y|ies)|spon
 _PUBLICATION = re.compile(r"\b(?:publish(?:es|ed|ing)?|releas(?:e|es|ed|ing)|публику\w*|опубликов\w*)\b", re.I)
 _UPDATE = re.compile(r"\b(?:updates?|upgrades?|adds?|added|обнов\w*|добав\w*)\b", re.I)
 _AVAILABILITY = re.compile(r"\b(?:available (?:now|today|to|for)|(?:now |generally )available|developers can|download|доступ\w*)\b", re.I)
-_CAPABILITY = re.compile(r"\b(?:supports?|enables?|provides?|allows?|reduces?|improves?|поддерж\w*|позвол\w*|снижа\w*)\b", re.I)
-_MEASURE = re.compile(r"\b\d[\d,.]*\s*(?:%|[- ]tokens?\b|languages?\b|milliseconds?\b|ms\b|язык\w*|токен\w*)", re.I)
+_CAPABILITY = re.compile(r"\b(?:supports?|enables?|provides?|allows?|reduces?|improves?|evaluate|поддерж\w*|позвол\w*|снижа\w*)\b", re.I)
+_MEASURE = re.compile(r"\b\d[\d,.]*\s*(?:%|[- ]tokens?\b|languages?\b|milliseconds?\b|ms\b|questions?\b|язык\w*|токен\w*)", re.I)
 _CONCRETE_CAPABILITY = re.compile(r"\b(?:streaming|tool calling|structured outputs|multimodal|offline|local inference|code execution)\b", re.I)
 _ARTIFACT = re.compile(r"\b(?:paper|dataset|code)\s+(?:is |are )?(?:now )?available\b|arxiv\.org/|doi\.org/", re.I)
 
@@ -89,15 +89,87 @@ def _sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"\.(?=\s|$)|[!?;\n]+", text) if part.strip()]
 
 
+# Bound raw work as well as selected evidence. Metadata cannot extend this scan.
+_EVIDENCE_CHARS = 4_000
+_EVIDENCE_BLOCKS = 16
+_EVIDENCE_SENTENCES = 6
+_DATE_BLOCK = re.compile(
+    r"(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\.? \d{1,2},? \d{4}|\d{4}-\d{2}-\d{2})", re.I,
+)
+_ROLE_BLOCK = re.compile(
+    r"(?:Product Manager|Research Director|(?:Senior )?(?:Research Scientist|Software Engineer)|"
+    r"(?:VP|Vice President) of (?:Product|Engineering|Research))"
+    r"(?:, [\w &-]+)?", re.I,
+)
+_NAME_BLOCK = re.compile(r"[^\W\d_][^\W\d_'-]*(?:[ '-][^\W\d_][^\W\d_'-]*){1,3}")
+_BACKGROUND = re.compile(r"\b(?:about the author|author biography|research interests|written by|previously)\b", re.I)
+_OTHER_EVENT = re.compile(r"^(?:another|elsewhere|in other|related (?:news|stories))\b", re.I)
+_PRODUCT_UPGRADE = re.compile(
+    r"\b(?:gets?|receives?|has received)\s+(?:a\s+)?(?:major |significant |new )?upgrade\b|"
+    r"\b(?:brings?|bringing|integrates?|integrating)\b.*\b(?:intelligence|AI|model)\b.*\b(?:to|into|with)\b", re.I,
+)
+
+
+def _uncertain(text: str) -> bool:
+    # A supported yes/no question format is not a denial of a release.
+    return bool(_UNCERTAIN_EVENT.search(re.sub(r"\byes/no\b", "binary", text, flags=re.I)))
+
+
+def evidence_sentences(content: str) -> list[str]:
+    """Read a bounded prefix; skip only full dates and adjacent name/role pairs.
+
+    Metadata stays in NewsItem.content. Unknown prose counts against the budget;
+    biographies and related-news boundaries stop selection rather than being
+    skipped to reach a later, potentially unrelated announcement.
+    """
+    prefix = content[:_EVIDENCE_CHARS]
+    raw_blocks = [block for block in prefix.splitlines() if block.strip()]
+    blocks = [re.sub(r"\s+", " ", block).strip() for block in raw_blocks[:_EVIDENCE_BLOCKS]]
+    cut_tail = (len(content) > _EVIDENCE_CHARS and len(raw_blocks) <= _EVIDENCE_BLOCKS
+                and not prefix.endswith((".", "!", "?", "\n")))
+    result = []
+    index = 0
+    while index < len(blocks) and len(result) < _EVIDENCE_SENTENCES:
+        block = blocks[index]
+        if _DATE_BLOCK.fullmatch(block):
+            index += 1
+            continue
+        if (_NAME_BLOCK.fullmatch(block) and all(word[0].isupper() for word in block.split())
+                and not has_ai_context(block) and index + 1 < len(blocks)
+                and _ROLE_BLOCK.fullmatch(blocks[index + 1])):
+            index += 2
+            continue
+        sentences = _sentences(block)
+        if cut_tail and index == len(blocks) - 1:
+            sentences = sentences[:-1]  # Never evaluate a cut claim without its qualifier.
+        for sentence in sentences:
+            if _BACKGROUND.search(sentence) or _OTHER_EVENT.search(sentence):
+                return result
+            result.append(sentence)
+            if len(result) == _EVIDENCE_SENTENCES:
+                break
+        index += 1
+    return result
+
+
+def _matches_subject(subject: set[str], text: str) -> bool:
+    words = {word.casefold() for word in re.findall(r"\w+", text)}
+    return bool(subject) and subject <= words
+
+
 def _event_category(sentence: str) -> str:
     if not has_ai_context(sentence):
         return "general"
-    if _UNCERTAIN_EVENT.search(sentence):
+    if _uncertain(sentence):
         return "rumor"
     if _EDUCATION.search(sentence):
         return "education"
     if _CORPORATE.search(sentence):
         return "corporate"
+    if _PRODUCT_UPGRADE.search(sentence):
+        return "product_update"
     # Bind publication/release to its object, before background qualifications.
     event = _RELEASE_EVENT.search(sentence) or _PUBLICATION.search(sentence)
     available = re.search(r"\b(?:is|are)\s+(?:now |generally )?available\b", sentence, re.I)
@@ -130,11 +202,20 @@ def _event_category(sentence: str) -> str:
 
 def _subject_words(title: str) -> set[str]:
     generic = {"a", "an", "the", "new", "our", "its", "introducing", "update", "updates",
-               "model", "ai", "google", "openai", "anthropic", "news", "api", "tool",
+               "model", "ai", "news", "api", "tool",
                "launches", "releases", "introduces", "publishes", "research", "paper",
                "of", "on", "in", "at", "to", "for", "from", "with", "by", "and",
                "or", "as", "is", "are", "was", "has", "have"}
-    return {word.casefold() for word in re.findall(r"\w+", title) if not word.isdecimal()} - generic
+    generic |= {"gets", "get", "a", "major", "significant", "upgrade", "upgrades", "s",
+                "today", "announces", "introduce", "launch", "release"}
+    obj = re.split(r"\b(?:powered by|based on|through|with)\b", title, maxsplit=1, flags=re.I)[0]
+    upgrade = re.search(r"\b(?:gets?|receives?|has received)\b", obj, re.I)
+    action = _RELEASE_EVENT.search(obj) or _PUBLICATION.search(obj) or _UPDATE.search(obj)
+    if upgrade:
+        obj = obj[:upgrade.start()]  # The subject is the product receiving an upgrade.
+    elif action:
+        obj = obj[action.end():]  # Do not bind evidence to the announcing company.
+    return {word.casefold() for word in re.findall(r"\w+", obj) if not word.isdecimal()} - generic
 
 
 def event_category(title: str, content: str = "") -> str:
@@ -142,7 +223,7 @@ def event_category(title: str, content: str = "") -> str:
     if re.search(r"\b(?:мнение|opinion|считает|колонк\w*)\b", title, re.I):
         return "opinion"
     headline = _event_category((_sentences(title) or [title])[0])
-    lead = _sentences(content)[:2]
+    lead = evidence_sentences(content)[:2]
     # An explicit educational/corporate headline outranks research in the body.
     if _EDUCATION.search(title):
         return "education"
@@ -150,7 +231,7 @@ def event_category(title: str, content: str = "") -> str:
         return "corporate"
     if headline not in {"general", "rumor"} and lead:
         subject = _subject_words(title)
-        if (not subject or subject.intersection(word.casefold() for word in re.findall(r"\w+", lead[0]))) and _event_category(lead[0]) == "rumor":
+        if (not subject or _matches_subject(subject, lead[0])) and _event_category(lead[0]) == "rumor":
             return "rumor"
     if re.search(r"\b(?:roundup|retrospective|last month|last year)\b", title, re.I):
         return "general"
@@ -163,7 +244,7 @@ def event_category(title: str, content: str = "") -> str:
     for sentence in lead:
         if re.search(r"\b(?:about the author|author biography|previously|research interests|written by)\b", sentence, re.I):
             continue
-        if subject and not subject.intersection(word.casefold() for word in re.findall(r"\w+", sentence)):
+        if subject and not _matches_subject(subject, sentence):
             continue
         candidate = _event_category(sentence)
         if candidate != "general":
@@ -191,7 +272,7 @@ def event_impact(title: str, content: str, category: str) -> int:
         return 0
     if category == "model_release" and re.search(r"\bannounc\w*\b", title, re.I):
         base = 60  # An announcement alone need not establish availability.
-    sentences = _sentences(content)[:3]
+    sentences = evidence_sentences(content)
     lead = " ".join(sentences)
     # Require a repeated subject, or a generic headline whose event is in the lead.
     if not lead:
@@ -199,11 +280,11 @@ def event_impact(title: str, content: str, category: str) -> int:
     subject = _subject_words(title)
     first = sentences[0]
     if subject:
-        if not subject.intersection(word.casefold() for word in re.findall(r"\w+", first)):
+        if not _matches_subject(subject, first):
             return base
     elif _event_category(first) != category:
         return base
-    if _UNCERTAIN_EVENT.search(first):
+    if _uncertain(first):
         return base
     # Availability names the existing product type; it need not repeat the
     # headline's update verb. Other event types must agree with the headline.
@@ -211,19 +292,25 @@ def event_impact(title: str, content: str, category: str) -> int:
         return base
     linked = [first]
     for sentence in sentences[1:]:
-        if _UNCERTAIN_EVENT.search(sentence):
+        if _uncertain(sentence):
             continue
         if re.match(r"(?:another|elsewhere|previously|in other)\b", sentence, re.I):
             break
-        if (subject.intersection(word.casefold() for word in re.findall(r"\w+", sentence))
-                or re.match(r"(?:it|its|the (?:API|tool|model|paper|study|update)|developers can)\b", sentence, re.I)):
+        same = _matches_subject(subject, sentence)
+        if _event_category(sentence) in {"api_release", "tool_release", "model_release", "product_update", "research"} and not same:
+            # A concrete second object breaks coreference for subsequent "it".
+            if not re.match(r"(?:it|its|the (?:API|tool|model|paper|study|update))\b", sentence, re.I):
+                break
+        if (same or re.match(r"(?:it|its|this|evaluate|the (?:API|tool|model|paper|study|update)|developers can)\b", sentence, re.I)):
             linked.append(sentence)
     lead = " ".join(linked)
     if category == "research":
         strong = bool(_ARTIFACT.search(lead) and _MEASURE.search(lead) and _PUBLICATION.search(lead))
     else:
+        modalities = {word.casefold().rstrip("s") for word in re.findall(r"\b(?:text|images?|audio|video|PDFs?)\b", lead, re.I)}
         strong = bool(_AVAILABILITY.search(lead) and _CAPABILITY.search(lead)
-                      and (_MEASURE.search(lead) or _CONCRETE_CAPABILITY.search(lead)))
+                      and (_MEASURE.search(lead) or _CONCRETE_CAPABILITY.search(lead)
+                           or len(modalities) >= 3))
     return 80 if strong else base
 
 
@@ -241,7 +328,7 @@ class NewsNormalizer:
             item = original.model_copy(deep=True)
             item.source = self._clean(item.source)
             item.title = self._clean(item.title)
-            item.content = self._clean(item.content) or None
+            item.content = "\n".join(self._clean(line) for line in (item.content or "").splitlines() if line.strip()) or None
             item.url = self._url(item.url)
             item.image_url = self._url(item.image_url) if item.image_url else None
             item.category = classify_category(
