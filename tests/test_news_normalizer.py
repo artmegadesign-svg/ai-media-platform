@@ -80,7 +80,7 @@ def test_unspecified_category_is_inferred_without_overwriting_explicit_category(
     ("OpenAI launches an AI coding assistant", "tool_release"),
     ("OpenAI releases ChatGPT app", "tool_release"),
     ("OpenAI releases an AI tool powered by GPT-5", "tool_release"),
-    ("OpenAI releases an API for GPT-5", "tool_release"),
+    ("OpenAI releases an API for GPT-5", "api_release"),
     ("Google представила ИИ-инструмент", "tool_release"),
     ("OpenAI releases a research paper about GPT-5", "research"),
     ("Исследование возможностей ИИ", "research"),
@@ -91,8 +91,8 @@ def test_unspecified_category_is_inferred_without_overwriting_explicit_category(
     ("GPT-5 is discussed as Google releases a travel report", "general"),
     ("OpenAI releases a travel report. GPT-5 is mentioned elsewhere", "general"),
     ("Google publishes a research paper about tourism", "general"),
-    ("OpenAI plans to release GPT-5", "general"),
-    ("OpenAI denies the release of GPT-5", "general"),
+    ("OpenAI plans to release GPT-5", "rumor"),
+    ("OpenAI denies the release of GPT-5", "rumor"),
     ("Opinion on the launch of GPT-5", "opinion"),
 ])
 def test_classification_requires_specific_ai_event_evidence(title, expected):
@@ -115,7 +115,7 @@ def test_explicit_content_categories_are_preserved_even_when_text_is_inconclusiv
     ("OpenAI releases GPT-5.1", "model_release"),
     ("OpenAI releases GPT-4.5", "model_release"),
     ("OpenAI releases GPT-5 SDK", "tool_release"),
-    ("OpenAI releases GPT-5 API", "tool_release"),
+    ("OpenAI releases GPT-5 API", "api_release"),
     ("OpenAI releases GPT-5.1 SDK", "tool_release"),
     ("Google launches Gemini SDK", "tool_release"),
     ("Google launches Gemini 2.5 SDK", "tool_release"),

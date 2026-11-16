@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 import pytest
 
 from db.session import SessionLocal
@@ -74,8 +72,8 @@ def _intelligence(now):
     )
 
 
-def test_approved_intelligence_generates_one_complete_post(monkeypatch, generation_db):
-    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+def test_approved_intelligence_generates_one_complete_post(monkeypatch, generation_db, fixed_editorial_now):
+    now = fixed_editorial_now
     _stub_content_engine(monkeypatch, approved=True)
     approved = _intelligence(now).analyze([_news(now)])
 
@@ -116,8 +114,8 @@ def test_each_approved_result_is_generated_at_most_once():
     assert len(generated) == 2
 
 
-def test_rejected_intelligence_is_not_sent_to_generator():
-    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+def test_rejected_intelligence_is_not_sent_to_generator(fixed_editorial_now):
+    now = fixed_editorial_now
     approved = _intelligence(now).analyze([_news(now, score=0)])
 
     class FailingGenerator:
@@ -128,8 +126,8 @@ def test_rejected_intelligence_is_not_sent_to_generator():
     assert IntelligenceContentGenerationService(FailingGenerator()).generate(approved) == []
 
 
-def test_quality_rejection_does_not_persist(monkeypatch, generation_db):
-    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+def test_quality_rejection_does_not_persist(monkeypatch, generation_db, fixed_editorial_now):
+    now = fixed_editorial_now
     _stub_content_engine(monkeypatch, approved=False)
     approved = _intelligence(now).analyze([_news(now)])
 
