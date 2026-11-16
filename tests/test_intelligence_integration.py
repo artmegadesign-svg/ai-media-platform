@@ -71,7 +71,7 @@ def test_standard_rss_news_passes_real_pipeline_and_returns_the_used_trend(fixed
     assert result.news.id in result.trend.news_ids
     assert result.trend.keyword == "OpenAI"
     assert result.trend.growth_score == 73.33
-    assert result.editorial.score == 74
+    assert result.editorial.score == 75.33
     assert result.editorial.publish is True
     assert result.editorial.priority == "normal"
     evaluation = EditorialEvaluator().evaluate(result.news, result.trend)
@@ -104,11 +104,12 @@ def test_standard_unsuitable_news_is_rejected(source, title, url, age, fixed_edi
     assert service.analyze([item]) == []
 
 
-def test_shared_category_does_not_attach_other_story_trend_to_intelligence_result():
+def test_shared_category_does_not_attach_other_story_trend_to_intelligence_result(fixed_editorial_now):
     first = EditorialNewsItem(
         id="first", source="OpenAI", title="OpenAI releases GPT-5",
         url="https://openai.com/first", category="model_release",
         authority=100, impact=100, audience=100, novelty=100,
+        published_at=fixed_editorial_now,
     )
     second = first.model_copy(update={
         "id": "second", "source": "Google", "title": "Google launches Gemini",

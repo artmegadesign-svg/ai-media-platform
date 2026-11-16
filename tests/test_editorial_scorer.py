@@ -13,4 +13,4 @@ def test_scorer_applies_editorial_weights():
         novelty=50,
     )
 
-    assert EditorialScorer().score(evaluation) == 74
+    assert EditorialScorer().score(evaluation) == 70

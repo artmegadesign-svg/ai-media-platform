@@ -1,0 +1,29 @@
+{
+  "provenance": "Only the verbatim blocks supplied in the user's VPS replay; not complete articles. diagnostic_title is an event label, not a claimed original RSS title.",
+  "api": {
+    "url": "https://blog.google/innovation-and-ai/technology/developers-tools/gemini-decisions-api/",
+    "published_at": "2026-11-11T00:00:00+00:00",
+    "date_precision": "day only; midnight UTC is a test convention, not an observed timestamp",
+    "diagnostic_title": "Introducing the Gemini Decisions API, powered by our new Gemini Decision 1 model",
+    "blocks": [
+      "Nov 11, 2026",
+      "Introducing the Gemini Decisions API, powered by our new Gemini Decision 1 model",
+      "Evaluate up to 1,000 yes/no, choice, and rubric-scoring questions in a fast, single pass across text, images, audio, video, and PDFs",
+      "Min Choi",
+      "Product Manager, Google DeepMind"
+    ]
+  },
+  "search": {
+    "url": "https://blog.google/products-and-platforms/products/search/gemini-4-hydrogen-search-upgrade/",
+    "published_at": "2026-11-12T00:00:00+00:00",
+    "date_precision": "day only; midnight UTC is a test convention, not an observed timestamp",
+    "diagnostic_title": "Google Search / Gemini 4 Hydrogen",
+    "blocks": [
+      "Nov 12, 2026",
+      "Robby Stein",
+      "VP of Product, Google Search",
+      "Today, Google Search is bringing cutting-edge intelligence to everyone with Gemini 4 Hydrogen",
+      "This is the biggest model upgrade to Search yet"
+    ]
+  }
+}

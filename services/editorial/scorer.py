@@ -8,9 +8,9 @@ class EditorialScorer:
 
     def score(self, evaluation: EditorialEvaluation) -> float:
         score = (
-            evaluation.trend_score * 0.30
+            evaluation.trend_score * 0.10
             + evaluation.authority * 0.20
-            + evaluation.impact * 0.20
+            + evaluation.impact * 0.40
             + evaluation.audience * 0.20
             + evaluation.novelty * 0.10
         )

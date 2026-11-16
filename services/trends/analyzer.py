@@ -67,7 +67,7 @@ class TrendAnalyzer:
                 _value(item, "content", "description", "summary", default="") or ""
             )
             text = f"{title} {body}"
-            category = classify_category(text, _value(item, "category"))
+            category = classify_category(title, _value(item, "category"), content=body)
             source = str(_value(item, "source", "source_name", "url", default=index))
             news_id = _value(item, "news_id", "id")
             published = _value(item, "published_at")

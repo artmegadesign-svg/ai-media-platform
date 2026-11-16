@@ -174,7 +174,7 @@ def test_facts_reach_editorial_and_existing_writer_pipeline(fixed_editorial_now)
     assert len(results) == 1
     evaluation = EditorialEvaluator().evaluate(results[0].news, results[0].trend)
     assert evaluation.category == "model_release" and evaluation.impact == 80
-    assert results[0].score == 74
+    assert results[0].score == 75.33
     p = ContentPipeline.__new__(ContentPipeline)
     p.strategy = SimpleNamespace(analyze=lambda topic: {"topic": topic})
     valid = "Factual headline\n\n" + "Confirmed source evidence. " * 30

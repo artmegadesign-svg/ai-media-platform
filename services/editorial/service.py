@@ -15,6 +15,8 @@ class EditorialService:
         "research": "analysis",
         "funding": "news",
         "tool_release": "guide",
+        "api_release": "guide",
+        "product_update": "news",
     }
 
     def __init__(
@@ -38,12 +40,19 @@ class EditorialService:
         trend = self._matching_trend(news, trends)
         evaluation = self.evaluator.evaluate(news, trend)
         score = self.scorer.score(evaluation)
-        publish = score >= 70
-        priority = "high" if score >= 85 else "normal" if publish else "low"
+        publish = score >= 70 and evaluation.blocked_reason is None
+        priority = "low" if not publish else "high" if score >= 85 else "normal"
         reason = (
             f"Editorial score {score:.2f} meets publication threshold"
             if publish
             else f"Editorial score {score:.2f} is below publication threshold"
+        )
+        if evaluation.blocked_reason:
+            reason = f"Editorial rejected: {evaluation.blocked_reason} (score {score:.2f})"
+        reason += (
+            f"; category={evaluation.category}; trend={evaluation.trend_score:.2f}"
+            f"; authority={evaluation.authority:.2f}; impact={evaluation.impact:.2f}"
+            f"; audience={evaluation.audience:.2f}; novelty={evaluation.novelty:.2f}"
         )
         return EditorialDecision(
             news_id=evaluation.news_id,

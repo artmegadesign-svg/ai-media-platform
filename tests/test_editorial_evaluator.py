@@ -49,8 +49,8 @@ def _standard_news(**overrides):
     })
 
 
-def test_standard_news_factors_use_evidence_and_real_growth_score():
-    news = _standard_news()
+def test_standard_news_factors_use_evidence_and_real_growth_score(fixed_editorial_now):
+    news = _standard_news(published_at=fixed_editorial_now)
     trend = TrendSignal(
         keyword="OpenAI", mentions=1, source_count=1,
         category="model_release", growth_score=73.33, news_ids=[news.id],
@@ -121,7 +121,7 @@ def test_missing_evidence_does_not_receive_high_defaults_or_reuse_news_score():
     ("OpenAI releases a research paper about GPT-5", "research", 60, 80),
     ("OpenAI releases a financial report", "general", 0, 0),
     ("OpenAI releases a travel report mentioning GPT-5", "general", 0, 80),
-    ("OpenAI plans to release GPT-5", "general", 0, 80),
+    ("OpenAI plans to release GPT-5", "rumor", 0, 80),
 ])
 def test_event_evidence_controls_fallback_impact(title, category, impact, audience):
     result = EditorialEvaluator().evaluate(_standard_news(title=title))
@@ -147,7 +147,7 @@ def test_explicit_model_category_alone_cannot_create_missing_impact():
     ("OpenAI releases GPT-5.1", "model_release", 80),
     ("OpenAI releases GPT-4.5", "model_release", 80),
     ("OpenAI releases GPT-5 SDK", "tool_release", 60),
-    ("OpenAI releases GPT-5 API", "tool_release", 60),
+    ("OpenAI releases GPT-5 API", "api_release", 60),
     ("OpenAI releases GPT-5.1 SDK", "tool_release", 60),
     ("Google launches Gemini SDK", "tool_release", 60),
     ("Google launches Gemini 2.5 SDK", "tool_release", 60),
