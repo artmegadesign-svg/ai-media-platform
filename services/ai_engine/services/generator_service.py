@@ -15,7 +15,7 @@ class GeneratorService:
             kwargs["source_content"] = source_content
         result = self.pipeline.generate_full_content(topic, **kwargs)
 
-        if result.get("status") == "duplicate":
+        if result.get("status") in {"duplicate", "reserved"}:
             return result
 
         if result.get("status") == "rejected":

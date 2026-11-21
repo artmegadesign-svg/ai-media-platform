@@ -74,7 +74,7 @@ def test_full_postgresql_alembic_chain_and_new_revision_roundtrip(quality_sessio
     config = Config('alembic.ini')
     command.upgrade(config, 'head')
     with engine.connect() as db:
-        assert db.execute(text('select version_num from alembic_version')).scalar() == migration.revision
+        assert db.execute(text('select version_num from alembic_version')).scalar() == 'c93a1e7b4d20'
     command.downgrade(config, migration.down_revision)
     assert not FIELDS & {c['name'] for c in inspect(engine).get_columns('channel_contents')}
     command.upgrade(config, 'head')

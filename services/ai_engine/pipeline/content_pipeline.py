@@ -3,6 +3,10 @@ import re
 from services.ai_engine.services.writer_service import AIWriterService
 from services.ai_engine.services.translator_service import AITranslatorService
 from services.ai_engine.services.post_service import PostService
+from services.ai_engine.services import post_service as post_service_module
+from services.ai_engine.services.generation_reservation_service import (
+    GenerationReservationService, LostGenerationLease,
+)
 from services.ai_engine.agents.quality_agent import QualityAgent
 from services.ai_engine.agents.strategy_agent import StrategyAgent
 from services.news.normalizer import source_identity
@@ -25,6 +29,30 @@ class ContentPipeline:
             if existing is not None:
                 return self.storage.duplicate_result(existing, canonical_url)
 
+        reservation_service = None
+        claim = None
+        if source_url is not None:
+            reservation_service = GenerationReservationService(
+                session_factory=post_service_module.SessionLocal
+            )
+            claim = reservation_service.claim(source_url)
+            if claim is None:
+                return {"status": "reserved", "post_created": False}
+            if not reservation_service.start(claim):
+                return {"status": "reserved", "post_created": False}
+
+        try:
+            return self._generate_owned_content(
+                topic, source_url=source_url, source_content=source_content,
+                reservation_service=reservation_service, claim=claim,
+            )
+        except Exception:
+            if claim is not None:
+                reservation_service.finish_without_post(claim, status="uncertain")
+            raise
+
+    def _generate_owned_content(self, topic, *, source_url, source_content,
+                                reservation_service, claim):
         strategy_result = self.strategy.analyze(topic)
 
         enhanced_topic = f"""
@@ -55,6 +83,8 @@ Keywords: {', '.join(strategy_result.get('keywords', []))}
         }
 
         if not quality_result.get("approved", False):
+            if claim is not None:
+                reservation_service.finish_without_post(claim, status="rejected")
             return {
                 "status": "rejected",
                 "issues": quality_result.get("issues", []),
@@ -65,13 +95,12 @@ Keywords: {', '.join(strategy_result.get('keywords', []))}
                 "quality_issues": quality_result.get("issues")
             }
 
-        post = self.storage.save(
-            topic,
-            ru,
-            en,
-            quality_result,
-            source_url=source_url,
-        )
+        if claim is not None and not reservation_service.renew(claim):
+            raise LostGenerationLease("Lease expired before Post persistence")
+        save_kwargs = {"source_url": source_url}
+        if claim is not None:
+            save_kwargs["reservation"] = claim
+        post = self.storage.save(topic, ru, en, quality_result, **save_kwargs)
 
         if not post["post_created"]:
             return post
