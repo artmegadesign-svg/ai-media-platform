@@ -139,12 +139,15 @@ class GenerationReservationService:
             ).with_for_update()
         ).scalar_one_or_none()
         now = _now()
+        expiry = row.lease_expires_at if row is not None else None
+        if expiry is not None and expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
         if (
             row is None or row.owner_token != claim.owner_token
             or row.lease_version != claim.lease_version
             or row.canonical_url != claim.canonical_url
             or row.status != "generating"
-            or row.lease_expires_at is None or row.lease_expires_at <= now
+            or expiry is None or expiry <= now
         ):
             raise LostGenerationLease("Generation reservation ownership expired")
         return row
