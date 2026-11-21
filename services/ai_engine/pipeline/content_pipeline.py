@@ -3,6 +3,7 @@ import re
 from services.ai_engine.services.writer_service import AIWriterService
 from services.ai_engine.services.translator_service import AITranslatorService
 from services.ai_engine.services.post_service import PostService
+from services.ai_engine.services import post_service as post_service_module
 from services.ai_engine.services.generation_reservation_service import (
     GenerationReservationService, LostGenerationLease,
 )
@@ -31,7 +32,9 @@ class ContentPipeline:
         reservation_service = None
         claim = None
         if source_url is not None:
-            reservation_service = GenerationReservationService()
+            reservation_service = GenerationReservationService(
+                session_factory=post_service_module.SessionLocal
+            )
             claim = reservation_service.claim(source_url)
             if claim is None:
                 return {"status": "reserved", "post_created": False}
