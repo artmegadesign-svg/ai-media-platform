@@ -6,6 +6,9 @@ from sqlalchemy.exc import IntegrityError
 from db.session import SessionLocal
 
 from models.post import Post
+from services.ai_engine.services.generation_reservation_service import (
+    GenerationClaim, GenerationReservationService,
+)
 from models.content_variant import ContentVariant
 from models.channel import Channel
 from models.channel_content import ChannelContent
@@ -64,6 +67,7 @@ class PostService:
         quality_result: dict | None = None,
         *,
         source_url: str | None = None,
+        reservation: GenerationClaim | None = None,
     ):
 
         quality_issues = _normalize_quality_issues(
@@ -72,6 +76,8 @@ class PostService:
         canonical_url, source_key = (
             source_identity(source_url) if source_url is not None else (None, None)
         )
+        if reservation is not None and source_key != reservation.source_key:
+            raise ValueError("Reservation source key does not match Post")
         db = SessionLocal()
 
         try:
@@ -85,6 +91,10 @@ class PostService:
                     False
                 )
 
+            reserved_row = (
+                GenerationReservationService.assert_owned_for_completion(db, reservation)
+                if reservation is not None else None
+            )
             post = Post(
                 source_url=canonical_url,
                 source_key=source_key,
@@ -126,6 +136,11 @@ class PostService:
                 ChannelContent(channel_id=channel.id, post_id=post.id, status="pending")
                 for channel in channels
             ])
+            if reserved_row is not None:
+                reserved_row.status = "completed"
+                reserved_row.post_id = post.id
+                reserved_row.owner_token = None
+                reserved_row.lease_expires_at = None
             db.commit()
             db.refresh(post)
 

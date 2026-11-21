@@ -1,3 +1,4 @@
+from models.ai_generation_reservation import AIGenerationReservation
 from models.asset import Asset
 from models.channel import Channel
 from models.channel_content import ChannelContent
@@ -10,6 +11,7 @@ from models.publication import Publication
 
 
 __all__ = [
+    "AIGenerationReservation",
     "Asset",
     "Channel",
     "ChannelContent",
