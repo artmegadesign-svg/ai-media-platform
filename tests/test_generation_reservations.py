@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
 
+import test_quality_issues_persistence as quality_fixtures
+
 import pytest
 from sqlalchemy import select
 
@@ -15,6 +17,8 @@ from services.ai_engine.services.generation_reservation_service import (
 from services.ai_engine.pipeline.content_pipeline import ContentPipeline
 from services.ai_engine.services.post_service import PostService
 
+
+quality_sessions = quality_fixtures.quality_sessions
 
 URL = "https://example.com/lease-news"
 
@@ -271,3 +275,26 @@ def test_rejected_is_terminal():
     assert service().start(claim)
     assert service().finish_without_post(claim, status="rejected")
     assert service().claim(URL) is None
+
+
+def test_database_backend_concurrent_claim(quality_sessions):
+    barrier = Barrier(2)
+    reservation_service = GenerationReservationService(session_factory=quality_sessions)
+
+    def attempt(_):
+        barrier.wait(timeout=10)
+        return reservation_service.claim(URL)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(attempt, range(2)))
+    winners = [claim for claim in claims if claim is not None]
+    assert len(winners) == 1
+    assert reservation_service.start(winners[0])
+    assert reservation_service.claim(URL) is None
+    result = PostService().save("Topic", "ru", "en", source_url=URL, reservation=winners[0])
+    with quality_sessions() as db:
+        row = db.get(Reservation, winners[0].source_key)
+        assert row.status == "completed"
+        assert row.post_id == result["id"]
+        assert db.query(Post).count() == 1
+    assert reservation_service.claim(URL) is None
