@@ -46,8 +46,9 @@ class GenerationReservationService:
         now = _now()
         with self.session_factory() as db:
             with db.begin():
-                if db.execute(select(Post.id).where(Post.source_key == key)).first():
+                if self.reconcile_existing_in_session(db, key, canonical_url):
                     return None
+                self.expire_in_session(db, key, now)
                 values = dict(
                     source_key=key, canonical_url=canonical_url, status="reserved",
                     owner_token=token, lease_version=1, attempt_count=1,
@@ -95,10 +96,44 @@ class GenerationReservationService:
                 ).scalar_one()
                 return GenerationClaim(key, canonical_url, token, version)
 
+    @staticmethod
+    def reconcile_existing_in_session(db, key, canonical_url):
+        post = db.execute(select(Post.id, Post.source_url).where(
+            Post.source_key == key
+        )).first()
+        if post is None:
+            return False
+        if post.source_url != canonical_url:
+            raise ValueError("Stored source identity does not match canonical URL")
+        db.execute(update(Reservation).where(
+            Reservation.source_key == key,
+            Reservation.canonical_url == canonical_url,
+            Reservation.status != "completed",
+        ).values(status="completed", post_id=post.id, owner_token=None,
+                 lease_expires_at=None, updated_at=_now()))
+        return True
+
+    def reconcile_existing(self, source_url):
+        canonical_url, key = source_identity(source_url)
+        with self.session_factory() as db:
+            with db.begin():
+                return self.reconcile_existing_in_session(db, key, canonical_url)
+
+    @staticmethod
+    def expire_in_session(db, key, now):
+        return db.execute(update(Reservation).where(
+            Reservation.source_key == key,
+            Reservation.status == "generating",
+            Reservation.lease_expires_at <= now,
+        ).values(status="uncertain", owner_token=None,
+                 lease_expires_at=None, updated_at=now)).rowcount == 1
+
     def start(self, claim: GenerationClaim) -> bool:
         now = _now()
         with self.session_factory() as db:
             with db.begin():
+                if self.reconcile_existing_in_session(db, claim.source_key, claim.canonical_url):
+                    return False
                 return db.execute(
                     update(Reservation)
                     .where(
@@ -175,18 +210,6 @@ class GenerationReservationService:
 
     def reconcile_expired_generating(self, source_key: str) -> bool:
         """Mark an expired paid attempt uncertain; never dispatch AI."""
-        now = _now()
         with self.session_factory() as db:
             with db.begin():
-                return db.execute(
-                    update(Reservation)
-                    .where(
-                        Reservation.source_key == source_key,
-                        Reservation.status == "generating",
-                        Reservation.lease_expires_at < now,
-                    )
-                    .values(
-                        status="uncertain", owner_token=None,
-                        lease_expires_at=None, updated_at=now,
-                    )
-                ).rowcount == 1
+                return self.expire_in_session(db, source_key, _now())

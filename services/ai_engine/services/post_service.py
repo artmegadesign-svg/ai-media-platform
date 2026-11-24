@@ -173,6 +173,8 @@ class PostService:
             ):
                 existing = self.find_by_source_key(source_key)
                 if existing is not None:
+                    if reservation is not None:
+                        GenerationReservationService(session_factory=SessionLocal).reconcile_existing(source_url)
                     return self.duplicate_result(existing, canonical_url)
             raise
         finally:

@@ -67,7 +67,7 @@ def test_expired_generating_becomes_uncertain_and_never_reclaims():
     with SessionLocal.begin() as db:
         db.get(Reservation, claim.source_key).lease_expires_at = _now() - timedelta(seconds=1)
     assert service().claim(URL) is None
-    assert service().reconcile_expired_generating(claim.source_key)
+    assert not service().reconcile_expired_generating(claim.source_key)
     assert service().claim(URL) is None
     with SessionLocal() as db:
         assert db.get(Reservation, claim.source_key).status == "uncertain"
@@ -152,3 +152,54 @@ def test_normal_generation_without_source_does_not_reserve(monkeypatch):
     assert result["post_created"] is True
     with SessionLocal() as db:
         assert db.query(Reservation).count() == 0
+
+
+def test_existing_post_reconciles_expired_reservation():
+    claim = service().claim(URL)
+    result = PostService().save("Topic", "ru", "en", source_url=URL)
+    with SessionLocal.begin() as db:
+        db.get(Reservation, claim.source_key).lease_expires_at = _now() - timedelta(seconds=1)
+    assert service().claim(URL) is None
+    with SessionLocal() as db:
+        row = db.get(Reservation, claim.source_key)
+        assert row.status == "completed"
+        assert row.post_id == result["id"]
+    assert not service().start(claim)
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_expired_writer_cannot_dispatch_translation_or_correction(monkeypatch, approved):
+    pipeline = ContentPipeline()
+    calls = []
+
+    def writer(topic):
+        calls.append("writer")
+        with SessionLocal.begin() as db:
+            row = db.query(Reservation).one()
+            row.lease_expires_at = _now() - timedelta(seconds=1)
+        return "ru"
+
+    monkeypatch.setattr(pipeline.writer, "generate_ru", writer)
+    monkeypatch.setattr(pipeline.translator, "ru_to_en", lambda text: pytest.fail("paid translation"))
+    monkeypatch.setattr(pipeline.quality, "check", lambda text: {
+        "approved": approved, "score": 100 if approved else 0,
+        "issues": [] if approved else ["Headline too long"],
+    })
+    with pytest.raises(LostGenerationLease):
+        pipeline.generate_full_content("Topic", source_url=URL)
+    assert calls == ["writer"]
+    with SessionLocal() as db:
+        assert db.query(Reservation).one().status == "uncertain"
+    assert pipeline.generate_full_content("Topic", source_url=URL)["post_created"] is False
+
+
+def test_stale_owner_cannot_renew_or_finish():
+    first = service().claim(URL)
+    with SessionLocal.begin() as db:
+        db.get(Reservation, first.source_key).lease_expires_at = _now() - timedelta(seconds=1)
+    second = service().claim(URL)
+    assert service().start(second)
+    assert not service().renew(first)
+    assert not service().finish_without_post(first, status="uncertain")
+    with SessionLocal() as db:
+        assert db.get(Reservation, first.source_key).owner_token == second.owner_token
