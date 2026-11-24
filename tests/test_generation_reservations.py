@@ -203,3 +203,71 @@ def test_stale_owner_cannot_renew_or_finish():
     assert not service().finish_without_post(first, status="uncertain")
     with SessionLocal() as db:
         assert db.get(Reservation, first.source_key).owner_token == second.owner_token
+
+
+@pytest.mark.parametrize("stage", ["variant", "channel", "commit"])
+def test_persistence_failure_rolls_back_all_rows(monkeypatch, stage):
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+    from models.channel import Channel
+    from models.channel_content import ChannelContent
+    from models.content_variant import ContentVariant
+
+    with SessionLocal.begin() as db:
+        db.add(Channel(name="Lease test", platform="telegram", language_code="ru"))
+    claim = service().claim(URL)
+    assert service().start(claim)
+
+    def fail(*args):
+        raise RuntimeError("injected persistence failure")
+
+    if stage == "commit":
+        original_commit = Session.commit
+
+        def fail_commit(db):
+            db.flush()
+            fail()
+
+        monkeypatch.setattr(Session, "commit", fail_commit)
+        try:
+            with pytest.raises(RuntimeError, match="injected persistence"):
+                PostService().save("Topic", "ru", "en", source_url=URL, reservation=claim)
+        finally:
+            monkeypatch.setattr(Session, "commit", original_commit)
+    else:
+        model = ContentVariant if stage == "variant" else ChannelContent
+        event.listen(model, "before_insert", fail)
+        try:
+            with pytest.raises(RuntimeError, match="injected persistence"):
+                PostService().save("Topic", "ru", "en", source_url=URL, reservation=claim)
+        finally:
+            event.remove(model, "before_insert", fail)
+
+    with SessionLocal() as db:
+        assert db.query(Post).count() == 0
+        assert db.query(ContentVariant).count() == 0
+        assert db.query(ChannelContent).count() == 0
+        row = db.get(Reservation, claim.source_key)
+        assert row.status == "generating"
+        assert row.post_id is None
+
+
+def test_duplicate_save_reconciles_without_overwriting_post():
+    claim = service().claim(URL)
+    assert service().start(claim)
+    existing = PostService().save("Original", "ru", "en", source_url=URL)
+    duplicate = PostService().save("Stale", "other", "other", source_url=URL, reservation=claim)
+    assert duplicate["post_created"] is False
+    with SessionLocal() as db:
+        post = db.query(Post).one()
+        assert post.title == "Original"
+        row = db.get(Reservation, claim.source_key)
+        assert row.status == "completed"
+        assert row.post_id == existing["id"]
+
+
+def test_rejected_is_terminal():
+    claim = service().claim(URL)
+    assert service().start(claim)
+    assert service().finish_without_post(claim, status="rejected")
+    assert service().claim(URL) is None
