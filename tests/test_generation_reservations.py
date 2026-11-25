@@ -298,3 +298,33 @@ def test_database_backend_concurrent_claim(quality_sessions):
         assert row.post_id == result["id"]
         assert db.query(Post).count() == 1
     assert reservation_service.claim(URL) is None
+
+
+def test_lease_expiry_during_flush_rolls_back(quality_sessions, monkeypatch):
+    from sqlalchemy import event
+    from models.channel_content import ChannelContent
+    from models.content_variant import ContentVariant
+    from services.ai_engine.services import generation_reservation_service as reservation_module
+
+    svc = GenerationReservationService(session_factory=quality_sessions)
+    claim = svc.claim(URL)
+    assert svc.start(claim)
+    original_now = reservation_module.database_now
+
+    def expire(*args):
+        monkeypatch.setattr(reservation_module, "database_now",
+                            lambda db: original_now(db) + timedelta(hours=1))
+
+    event.listen(ChannelContent, "after_insert", expire)
+    try:
+        with pytest.raises(LostGenerationLease):
+            PostService().save("Topic", "ru", "en", source_url=URL, reservation=claim)
+    finally:
+        event.remove(ChannelContent, "after_insert", expire)
+
+    with quality_sessions() as db:
+        assert db.query(Post).count() == 0
+        assert db.query(ContentVariant).count() == 0
+        assert db.query(ChannelContent).count() == 0
+        assert db.get(Reservation, claim.source_key).status == "generating"
+    assert svc.finish_without_post(claim, status="uncertain")
