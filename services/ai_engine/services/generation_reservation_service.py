@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -19,6 +19,18 @@ from services.news.normalizer import source_identity
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+def database_now(db):
+    if db.bind.dialect.name == "postgresql":
+        return db.execute(select(func.clock_timestamp())).scalar_one()
+    return _now()
+
+
+def lock_reservation(db, key):
+    db.execute(select(Reservation.source_key).where(
+        Reservation.source_key == key
+    ).with_for_update()).first()
 
 
 @dataclass(frozen=True)
@@ -43,9 +55,10 @@ class GenerationReservationService:
     def claim(self, source_url: str) -> GenerationClaim | None:
         canonical_url, key = source_identity(source_url)
         token = str(uuid4())
-        now = _now()
         with self.session_factory() as db:
             with db.begin():
+                lock_reservation(db, key)
+                now = database_now(db)
                 if self.reconcile_existing_in_session(db, key, canonical_url):
                     return None
                 self.expire_in_session(db, key, now)
@@ -70,6 +83,8 @@ class GenerationReservationService:
                 inserted = db.execute(stmt).rowcount == 1
                 if inserted:
                     return GenerationClaim(key, canonical_url, token, 1)
+                lock_reservation(db, key)
+                now = database_now(db)
                 # Atomic conditional UPDATE is the serialization point for
                 # reclaiming expired work that never entered paid generation.
                 changed = db.execute(
@@ -79,7 +94,7 @@ class GenerationReservationService:
                         Reservation.canonical_url == canonical_url,
                         Reservation.status == "reserved",
                         Reservation.generation_started_at.is_(None),
-                        Reservation.lease_expires_at < now,
+                        Reservation.lease_expires_at <= now,
                     )
                     .values(
                         owner_token=token,
@@ -110,7 +125,7 @@ class GenerationReservationService:
             Reservation.canonical_url == canonical_url,
             Reservation.status != "completed",
         ).values(status="completed", post_id=post.id, owner_token=None,
-                 lease_expires_at=None, updated_at=_now()))
+                 lease_expires_at=None, updated_at=database_now(db)))
         return True
 
     def reconcile_existing(self, source_url):
@@ -129,9 +144,10 @@ class GenerationReservationService:
                  lease_expires_at=None, updated_at=now)).rowcount == 1
 
     def start(self, claim: GenerationClaim) -> bool:
-        now = _now()
         with self.session_factory() as db:
             with db.begin():
+                lock_reservation(db, claim.source_key)
+                now = database_now(db)
                 if self.reconcile_existing_in_session(db, claim.source_key, claim.canonical_url):
                     return False
                 return db.execute(
@@ -147,9 +163,10 @@ class GenerationReservationService:
                 ).rowcount == 1
 
     def renew(self, claim: GenerationClaim) -> bool:
-        now = _now()
         with self.session_factory() as db:
             with db.begin():
+                lock_reservation(db, claim.source_key)
+                now = database_now(db)
                 return db.execute(
                     update(Reservation)
                     .where(
@@ -173,7 +190,7 @@ class GenerationReservationService:
                 Reservation.source_key == claim.source_key
             ).with_for_update()
         ).scalar_one_or_none()
-        now = _now()
+        now = database_now(db)
         expiry = row.lease_expires_at if row is not None else None
         if expiry is not None and expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=timezone.utc)
@@ -190,9 +207,10 @@ class GenerationReservationService:
     def finish_without_post(self, claim: GenerationClaim, *, status: str) -> bool:
         if status not in {"uncertain", "rejected"}:
             raise ValueError("Only uncertain/rejected may finish without a Post")
-        now = _now()
         with self.session_factory() as db:
             with db.begin():
+                lock_reservation(db, claim.source_key)
+                now = database_now(db)
                 return db.execute(
                     update(Reservation)
                     .where(
@@ -200,7 +218,7 @@ class GenerationReservationService:
                         Reservation.owner_token == claim.owner_token,
                         Reservation.lease_version == claim.lease_version,
                         Reservation.status == "generating",
-                        Reservation.lease_expires_at > now,
+                        (Reservation.lease_expires_at > now) if status == "rejected" else True,
                     )
                     .values(
                         status=status, owner_token=None, lease_expires_at=None,
@@ -212,4 +230,5 @@ class GenerationReservationService:
         """Mark an expired paid attempt uncertain; never dispatch AI."""
         with self.session_factory() as db:
             with db.begin():
-                return self.expire_in_session(db, source_key, _now())
+                lock_reservation(db, source_key)
+                return self.expire_in_session(db, source_key, database_now(db))
