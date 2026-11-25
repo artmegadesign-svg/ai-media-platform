@@ -7,7 +7,7 @@ from db.session import SessionLocal
 
 from models.post import Post
 from services.ai_engine.services.generation_reservation_service import (
-    GenerationClaim, GenerationReservationService,
+    GenerationClaim, GenerationReservationService, database_now,
 )
 from models.content_variant import ContentVariant
 from models.channel import Channel
@@ -137,6 +137,9 @@ class PostService:
                 for channel in channels
             ])
             if reserved_row is not None:
+                db.flush()
+                GenerationReservationService.assert_owned_for_completion(db, reservation)
+                reserved_row.updated_at = database_now(db)
                 reserved_row.status = "completed"
                 reserved_row.post_id = post.id
                 reserved_row.owner_token = None
