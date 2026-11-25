@@ -49,8 +49,7 @@ class ContentPipeline:
             )
         except Exception:
             if claim is not None:
-                if not reservation_service.finish_without_post(claim, status="uncertain"):
-                    reservation_service.reconcile_expired_generating(claim.source_key)
+                reservation_service.finish_without_post(claim, status="uncertain")
             raise
 
     def _generate_owned_content(self, topic, *, source_url, source_content,
